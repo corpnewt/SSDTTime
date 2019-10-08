@@ -90,8 +90,8 @@ class SSDT:
                     print(" ----> NOT Valid EC Device")
         else:
             print(" - None found - only needs a Fake EC device")
-        print("Locating LPC(B)...")
-        lpc_name = next((x for x in ("LPCB","LPC") if x in self.d.dsdt),None)
+        print("Locating LPC(B)/SBRG...")
+        lpc_name = next((x for x in ("LPCB","LPC","SBRG") if x in self.d.dsdt),None)
         if not lpc_name:
             print(" - Could not locate LPC(B)! Aborting!")
             print("")
@@ -523,8 +523,8 @@ DefinitionBlock ("", "SSDT", 2, "CpuRef", "CpuPlug", 0x00003000)
                 print("")
         # Restore the original DSDT in memory
         self.d.dsdt_raw = saved_dsdt
-        print("Locating LPC(B)...")
-        lpc_name = next((x for x in ("LPCB","LPC") if x in self.d.dsdt),None)
+        print("Locating LPC(B)/SBRG...")
+        lpc_name = next((x for x in ("LPCB","LPC","SBRG") if x in self.d.dsdt),None)
         if not lpc_name:
             print(" - Could not locate LPC(B)! Aborting!")
             print("")
@@ -556,7 +556,6 @@ DefinitionBlock ("", "SSDT", 2, "CpuRef", "CpuPlug", 0x00003000)
 DefinitionBlock ("", "SSDT", 2, "hack", "HPET", 0x00000000)
 {
     External (_SB_.PCI0.[[LPCName]], DeviceObj)    // (from opcode)
-
     Name (\_SB.PCI0.[[LPCName]].HPET._CRS, ResourceTemplate ()  // _CRS: Current Resource Settings
     {
         IRQNoFlags ()
