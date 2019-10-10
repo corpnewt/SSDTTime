@@ -75,8 +75,60 @@ class SSDT:
         else:
             self.re.reveal(aml_path,True)
         return True
+    
+    def make_ssdt(self, oc_acpi, cl_acpi, patches):
+        repeat = False
+        print("Building patches_OC and patches_Clover plists...")
+        output = self.check_output()
+        if os.path.isfile(os.path.join(output,"patches_OC.plist")): 
+            e = os.path.join(output,"patches_OC.plist")
+            with open(e, "rb") as f:
+                oc_plist = plist.load(f)
+            e = os.path.join(output,"patches_Clover.plist")
+            with open(e,"rb") as f:
+                cl_plist = plist.load(f)
+            if oc_acpi not in oc_plist["ACPI"]["Add"]:
+                if oc_plist["ACPI"]["Add"][0]:
+                    oc_plist["ACPI"]["Add"].append(oc_acpi)
+                else:
+                    oc_plist["ACPI"]["Add"] = [oc_acpi]
+            if cl_acpi not in cl_plist["ACPI"]["SortedOrder"]:
+                if cl_plist["ACPI"]["SortedOrder"][0]:
+                    cl_plist["ACPI"]["SortedOrder"].append(cl_acpi)
+                else:
+                    cl_plist["ACPI"]["SortedOrder"] = [cl_acpi]
+        else:
+            oc_plist = {"ACPI":{"Patch":[]}}
+            cl_plist = {"ACPI":{"DSDT":{"Patches":[]}}}
+            # Add the SSDT to the dicts
+            oc_plist["ACPI"]["Add"] = [oc_acpi]
+            cl_plist["ACPI"]["SortedOrder"] = [cl_acpi]    
+        # Iterate the patches
+        if patches != None:
+            for p in patches:
+                if os.path.isfile(os.path.join(output,"patches_OC.plist")):
+                    if oc_plist["ACPI"]["Patch"][0]:
+                        if any((x)["Comment"] == p["Comment"] for x in oc_plist["ACPI"]["Patch"]):
+                            print(" -> Patch \"{}\" already in OC plist!".format(p["Comment"]))
+                else:
+                    oc_plist["ACPI"]["Patch"].append(self.get_oc_patch(p))
+                    print(" -> Adding Patch \"{}\" to OC plist!".format(p["Comment"]))
+                if os.path.isfile(os.path.join(output,"patches_Clover.plist")):
+                    if cl_plist["ACPI"]["DSDT"]["Patches"][0]:
+                        if any((x)["Comment"] == p["Comment"] for x in cl_plist["ACPI"]["DSDT"]["Patches"]):
+                            print(" -> Patch \"{}\" already in Clover plist!".format(p["Comment"]))
+                else:
+                    cl_plist["ACPI"]["DSDT"]["Patches"].append(self.get_clover_patch(p))
+                    print(" -> Adding Patch \"{}\" to Clover plist!".format(p["Comment"]))          
+                
+        # Write the plists
+        with open(os.path.join(output,"patches_OC.plist"),"wb") as f:
+            plist.dump(oc_plist,f)
+        with open(os.path.join(output,"patches_Clover.plist"),"wb") as f:
+            plist.dump(cl_plist,f)
 
     def fake_ec(self):
+        rename = False
         if not self.ensure_dsdt():
             return
         self.u.head("Fake EC")
@@ -94,6 +146,12 @@ class SSDT:
                 # We need to check for _HID, _CRS, and _GPE
                 if all((y in scope for y in ["_HID","_CRS","_GPE"])):
                     print(" ----> Valid EC Device")
+                    if device == "EC":
+                        print(" ----> EC called EC. Renaming")
+                        device = "EC0"
+                        rename = True
+                    else:
+                        rename = False
                     ec_to_patch.append(device)
                 else:
                     print(" ----> NOT Valid EC Device")
@@ -108,6 +166,13 @@ class SSDT:
             return
         else:
             print(" - Found {}".format(lpc_name))
+        if rename == True:
+            patches = [{"Comment":"EC to EC0","Find":"45435f5f","Replace":"4543305f"}]  
+            oc = {"Comment":"SSDT-EC (Needs EC to EC0 rename)","Enabled":True,"Path":"SSDT-EC.aml"}
+        else:
+            patches = None
+            oc = {"Comment":"SSDT-EC","Enabled":True,"Path":"SSDT-EC.aml"}
+        self.make_ssdt(oc, "SSDT-EC.aml", patches)
         print("Creating SSDT-EC...")
         ssdt = """
 DefinitionBlock ("", "SSDT", 2, "APPLE ", "SsdtEC", 0x00001000)
@@ -175,6 +240,8 @@ DefinitionBlock ("", "SSDT", 2, "APPLE ", "SsdtEC", 0x00001000)
             return
         else:
             print(" - Found {}".format(cpu_name))
+        oc = {"Comment":"Plugin Type","Enabled":True,"Path":"SSDT-PLUG.aml"}
+        self.make_ssdt(oc, "SSDT-PLUG.aml", None)
         print("Creating SSDT-PLUG...")
         ssdt = """
 DefinitionBlock ("", "SSDT", 2, "CpuRef", "CpuPlug", 0x00003000)
@@ -556,22 +623,8 @@ DefinitionBlock ("", "SSDT", 2, "CpuRef", "CpuPlug", 0x00003000)
             print("HPET could not be located.")
             self.u.grab("Press [enter] to return to main menu...")
             return     
-        print("Building patches_OC and patches_Clover plists...")
-        oc_plist = {"ACPI":{"Patch":[]}}
-        cl_plist = {"ACPI":{"DSDT":{"Patches":[]}}}
-        # Add the SSDT to the dicts
-        oc_plist["ACPI"]["Add"] = [{"Comment":"HPET _CRS (Needs _CRS to XCRS Rename)","Enabled":True,"Path":"SSDT-HPET.aml"}]
-        cl_plist["ACPI"]["SortedOrder"] = ["SSDT-HPET.aml"]
-        # Iterate the patches
-        for p in patches:
-            oc_plist["ACPI"]["Patch"].append(self.get_oc_patch(p))
-            cl_plist["ACPI"]["DSDT"]["Patches"].append(self.get_clover_patch(p))
-        # Write the plists
-        output = self.check_output()
-        with open(os.path.join(output,"patches_OC.plist"),"wb") as f:
-            plist.dump(oc_plist,f)
-        with open(os.path.join(output,"patches_Clover.plist"),"wb") as f:
-            plist.dump(cl_plist,f)
+        oc = {"Comment":"HPET _CRS (Needs _CRS to XCRS Rename)","Enabled":True,"Path":"SSDT-HPET.aml"}
+        self.make_ssdt(oc, "SSDT-HPET.aml", patches)
         print("Creating SSDT-HPET...")
         ssdt = """//
 // Supplementary HPET _CRS from Goldfish64
