@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # 0.0.0
 from Scripts import *
-import os, tempfile, shutil, plistlib, sys, binascii, zipfile, re
+import os, tempfile, shutil, plistlib, sys, binascii, zipfile, re, string
 
 class SSDT:
     def __init__(self, **kwargs):
@@ -16,6 +16,15 @@ class SSDT:
         self.output = "Results"
         self.legacy_irq = ["TMR","TIMR","IPIC","RTC"] # Could add HPET for extra patch-ness, but shouldn't be needed
         self.target_irqs = [0,8,11]
+
+    def find_substring(self, needle, haystack): # partial credits to aronasterling on Stack Overflow
+        index = haystack.find(needle)
+        if index == -1:
+            return False
+        L = index + len(needle)
+        if L < len(haystack) and haystack[L] in string.ascii_uppercase:
+            return False
+        return True
 
     def check_output(self):
         t_folder = os.path.join(os.path.dirname(os.path.realpath(__file__)), self.output)
@@ -91,7 +100,7 @@ class SSDT:
         else:
             print(" - None found - only needs a Fake EC device")
         print("Locating LPC(B)/SBRG...")
-        lpc_name = next((x for x in ("LPCB","LPC","SBRG") if x in self.d.dsdt),None)
+        lpc_name = next((x for x in ("LPCB","LPC","SBRG") if self.find_substring(x,self.d.dsdt)),None)
         if not lpc_name:
             print(" - Could not locate LPC(B)! Aborting!")
             print("")
@@ -523,15 +532,30 @@ DefinitionBlock ("", "SSDT", 2, "CpuRef", "CpuPlug", 0x00003000)
                 print("")
         # Restore the original DSDT in memory
         self.d.dsdt_raw = saved_dsdt
-        print("Locating LPC(B)/SBRG...")
-        lpc_name = next((x for x in ("LPCB","LPC","SBRG") if x in self.d.dsdt),None)
-        if not lpc_name:
-            print(" - Could not locate LPC(B)! Aborting!")
-            print("")
+        print("Locating HPET...")
+        try:
+            for x in self.d.get_scope(self.d.get_devices("HPET", strip_comments=True)[0][1]):
+                if "HPET." in x:
+                    scope = x
+                    break
+            while scope[:1] != "\\":
+                scope = scope[1:]
+            scope = scope[1:]
+            while scope[-4:] != "HPET":
+                scope = scope[:-1]
+            scope = scope[:-5]
+            if "_SB" in scope:
+                scope = scope.replace("_SB", "_SB_")
+            if scope == "":
+                scope = "HPET"
+                name = scope
+            else:
+                name = scope + ".HPET"
+            print("Location: {}".format(scope))
+        except:
+            print("HPET could not be located.")
             self.u.grab("Press [enter] to return to main menu...")
-            return
-        else:
-            print(" - Found {}".format(lpc_name))
+            return     
         print("Building patches_OC and patches_Clover plists...")
         oc_plist = {"ACPI":{"Patch":[]}}
         cl_plist = {"ACPI":{"DSDT":{"Patches":[]}}}
@@ -555,8 +579,8 @@ DefinitionBlock ("", "SSDT", 2, "CpuRef", "CpuPlug", 0x00003000)
 //
 DefinitionBlock ("", "SSDT", 2, "hack", "HPET", 0x00000000)
 {
-    External (_SB_.PCI0.[[LPCName]], DeviceObj)    // (from opcode)
-    Name (\_SB.PCI0.[[LPCName]].HPET._CRS, ResourceTemplate ()  // _CRS: Current Resource Settings
+    External ([[ext]], DeviceObj)    // (from opcode)
+    Name (\[[name]]._CRS, ResourceTemplate ()  // _CRS: Current Resource Settings
     {
         IRQNoFlags ()
             {0,8,11}
@@ -566,7 +590,7 @@ DefinitionBlock ("", "SSDT", 2, "hack", "HPET", 0x00000000)
             )
     })
 }
-""".replace("[[LPCName]]",lpc_name)
+""".replace("[[ext]]",scope).replace("[[name]]",name)
         self.write_ssdt("SSDT-HPET",ssdt)
         print("")
         print("Done.")
