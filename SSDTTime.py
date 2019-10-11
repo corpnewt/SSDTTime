@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # 0.0.0
 from Scripts import *
-import os, tempfile, shutil, plistlib, sys, binascii, zipfile, re, string
+import getpass, os, tempfile, shutil, plistlib, sys, binascii, zipfile, re, string
 
 class SSDT:
     def __init__(self, **kwargs):
@@ -48,6 +48,37 @@ class SSDT:
             if self.d.load(out):
                 return out
         return self.select_dsdt()
+
+    def dump_dsdt(self):
+        self.u.head("Dumping DSDT")
+        print("")
+        print("Checking if DSDT exists")
+        res = self.check_output()
+        e = "/sys/firmware/acpi/tables/DSDT"
+        dsdt_path = os.path.join(res,"DSDT.aml")
+        if os.path.isfile(e):
+            print("Copying DSDT to safe location.")
+            print("You have to enter your password to copy the file:")
+            out = self.r.run({"args":["sudo", "cp", e, dsdt_path]})
+            if out[2] != 0:
+                print(" - {}".format(out[1]))
+            print("Changing file ownership")
+            out = self.r.run({"args":["sudo", "chown", getpass.getuser(), dsdt_path]})
+            if out[2] != 0:
+                print(" - {}".format(out[1]))
+            print("Success!")
+            if self.d.load(dsdt_path):
+                self.u.grab("Press [enter] to return to main menu...")
+                return dsdt_path
+            else:
+                print("Loading file failed!")
+                self.u.grab("Press [enter] to return to main menu...")
+                return 
+        else:
+            print("Couldn't find DSDT table")
+            self.u.grab("Press [enter] to return to main menu...")
+            return 
+
 
     def ensure_dsdt(self):
         if self.dsdt and self.d.dsdt:
@@ -659,6 +690,8 @@ DefinitionBlock ("", "SSDT", 2, "hack", "HPET", 0x00000000)
         print("1. FixHPET    - Patch out IRQ Conflicts")
         print("2. FakeEC     - OS-aware Fake EC")
         print("3. PluginType - Sets plugin-type = 1 on CPU0/PR00")
+        if sys.platform == "linux":
+            print("4. Dump DSDT  - Automatically dump the system DSDT")
         print("")
         print("D. Select DSDT or origin folder")
         print("Q. Quit")
@@ -677,6 +710,12 @@ DefinitionBlock ("", "SSDT", 2, "hack", "HPET", 0x00000000)
             self.fake_ec()
         elif menu == "3":
             self.plugin_type()
+        elif menu == "4":
+            if sys.platform == "linux":
+                self.dsdt = self.dump_dsdt()
+            else:
+                return
+
         return
 
 if __name__ == '__main__':
