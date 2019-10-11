@@ -107,7 +107,7 @@ class SSDT:
             self.re.reveal(aml_path,True)
         return True
     
-    def make_ssdt(self, oc_acpi, cl_acpi, patches):
+    def make_plist(self, oc_acpi, cl_acpi, patches):
         repeat = False
         print("Building patches_OC and patches_Clover plists...")
         output = self.check_output()
@@ -203,7 +203,7 @@ class SSDT:
         else:
             patches = None
             oc = {"Comment":"SSDT-EC","Enabled":True,"Path":"SSDT-EC.aml"}
-        self.make_ssdt(oc, "SSDT-EC.aml", patches)
+        self.make_plist(oc, "SSDT-EC.aml", patches)
         print("Creating SSDT-EC...")
         ssdt = """
 DefinitionBlock ("", "SSDT", 2, "APPLE ", "SsdtEC", 0x00001000)
@@ -272,7 +272,7 @@ DefinitionBlock ("", "SSDT", 2, "APPLE ", "SsdtEC", 0x00001000)
         else:
             print(" - Found {}".format(cpu_name))
         oc = {"Comment":"Plugin Type","Enabled":True,"Path":"SSDT-PLUG.aml"}
-        self.make_ssdt(oc, "SSDT-PLUG.aml", None)
+        self.make_plist(oc, "SSDT-PLUG.aml", None)
         print("Creating SSDT-PLUG...")
         ssdt = """
 DefinitionBlock ("", "SSDT", 2, "CpuRef", "CpuPlug", 0x00003000)
@@ -655,7 +655,7 @@ DefinitionBlock ("", "SSDT", 2, "CpuRef", "CpuPlug", 0x00003000)
             self.u.grab("Press [enter] to return to main menu...")
             return     
         oc = {"Comment":"HPET _CRS (Needs _CRS to XCRS Rename)","Enabled":True,"Path":"SSDT-HPET.aml"}
-        self.make_ssdt(oc, "SSDT-HPET.aml", patches)
+        self.make_plist(oc, "SSDT-HPET.aml", patches)
         print("Creating SSDT-HPET...")
         ssdt = """//
 // Supplementary HPET _CRS from Goldfish64
