@@ -9,6 +9,8 @@ A simple tool designed to make creating SSDTs simple.
     - Sets plugin-type = 1 on CPU0/PR00
 - SSDT-HPET
     - Patches out IRQ conflicts
+    
+Additionally on Linux the tool can be used to dump the system DSDT.
 
 ### Credits:
 - [CorpNewt](https://github.com/CorpNewt) - Writing the script and libraries used
