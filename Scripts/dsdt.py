@@ -8,7 +8,8 @@ class DSDT:
     def __init__(self, **kwargs):
         self.dl = downloader.Downloader()
         self.r  = run.Run()
-        self.iasl_url = "https://bitbucket.org/RehabMan/acpica/downloads/iasl.zip"
+        self.iasl_url_macOS = "https://bitbucket.org/RehabMan/acpica/downloads/iasl.zip"
+        self.iasl_url_linux = "http://files.kellycloud.tk/AMDOSX/iasl.zip"
         self.iasl = self.check_iasl()
         if not self.iasl:
             return None
@@ -76,7 +77,12 @@ class DSDT:
             # Need to download
             temp = tempfile.mkdtemp()
             try:
-                self._download_and_extract(temp,self.iasl_url)
+                if sys.platform == "darwin":
+                    self._download_and_extract(temp,self.iasl_url_macOS)
+                elif sys.platform == "linux":
+                    self._download_and_extract(temp,self.iasl_url_linux)
+                else: 
+                    raise Exception  
             except Exception as e:
                 print("An error occurred :(\n - {}".format(e))
             shutil.rmtree(temp, ignore_errors=True)

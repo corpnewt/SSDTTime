@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # 0.0.0
 from Scripts import *
-import os, tempfile, shutil, plistlib, sys, binascii, zipfile, re
+import getpass, os, tempfile, shutil, plistlib, sys, binascii, zipfile, re, string
 
 class SSDT:
     def __init__(self, **kwargs):
@@ -16,6 +16,15 @@ class SSDT:
         self.output = "Results"
         self.legacy_irq = ["TMR","TIMR","IPIC","RTC"] # Could add HPET for extra patch-ness, but shouldn't be needed
         self.target_irqs = [0,8,11]
+
+    def find_substring(self, needle, haystack): # partial credits to aronasterling on Stack Overflow
+        index = haystack.find(needle)
+        if index == -1:
+            return False
+        L = index + len(needle)
+        if L < len(haystack) and haystack[L] in string.ascii_uppercase:
+            return False
+        return True
 
     def check_output(self):
         t_folder = os.path.join(os.path.dirname(os.path.realpath(__file__)), self.output)
@@ -39,6 +48,37 @@ class SSDT:
             if self.d.load(out):
                 return out
         return self.select_dsdt()
+
+    def dump_dsdt(self):
+        self.u.head("Dumping DSDT")
+        print("")
+        print("Checking if DSDT exists")
+        res = self.check_output()
+        e = "/sys/firmware/acpi/tables/DSDT"
+        dsdt_path = os.path.join(res,"DSDT.aml")
+        if os.path.isfile(e):
+            print("Copying DSDT to safe location.")
+            print("You have to enter your password to copy the file:")
+            out = self.r.run({"args":["sudo", "cp", e, dsdt_path]})
+            if out[2] != 0:
+                print(" - {}".format(out[1]))
+            print("Changing file ownership")
+            out = self.r.run({"args":["sudo", "chown", getpass.getuser(), dsdt_path]})
+            if out[2] != 0:
+                print(" - {}".format(out[1]))
+            print("Success!")
+            if self.d.load(dsdt_path):
+                self.u.grab("Press [enter] to return to main menu...")
+                return dsdt_path
+            else:
+                print("Loading file failed!")
+                self.u.grab("Press [enter] to return to main menu...")
+                return 
+        else:
+            print("Couldn't find DSDT table")
+            self.u.grab("Press [enter] to return to main menu...")
+            return 
+
 
     def ensure_dsdt(self):
         if self.dsdt and self.d.dsdt:
@@ -66,8 +106,60 @@ class SSDT:
         else:
             self.re.reveal(aml_path,True)
         return True
+    
+    def make_plist(self, oc_acpi, cl_acpi, patches):
+        repeat = False
+        print("Building patches_OC and patches_Clover plists...")
+        output = self.check_output()
+        if os.path.isfile(os.path.join(output,"patches_OC.plist")): 
+            e = os.path.join(output,"patches_OC.plist")
+            with open(e, "rb") as f:
+                oc_plist = plist.load(f)
+            e = os.path.join(output,"patches_Clover.plist")
+            with open(e,"rb") as f:
+                cl_plist = plist.load(f)
+            if oc_acpi not in oc_plist["ACPI"]["Add"]:
+                if oc_plist["ACPI"]["Add"][0]:
+                    oc_plist["ACPI"]["Add"].append(oc_acpi)
+                else:
+                    oc_plist["ACPI"]["Add"] = [oc_acpi]
+            if cl_acpi not in cl_plist["ACPI"]["SortedOrder"]:
+                if cl_plist["ACPI"]["SortedOrder"][0]:
+                    cl_plist["ACPI"]["SortedOrder"].append(cl_acpi)
+                else:
+                    cl_plist["ACPI"]["SortedOrder"] = [cl_acpi]
+        else:
+            oc_plist = {"ACPI":{"Patch":[]}}
+            cl_plist = {"ACPI":{"DSDT":{"Patches":[]}}}
+            # Add the SSDT to the dicts
+            oc_plist["ACPI"]["Add"] = [oc_acpi]
+            cl_plist["ACPI"]["SortedOrder"] = [cl_acpi]    
+        # Iterate the patches
+        if patches != None:
+            for p in patches:
+                if os.path.isfile(os.path.join(output,"patches_OC.plist")):
+                    if oc_plist["ACPI"]["Patch"][0]:
+                        if any((x)["Comment"] == p["Comment"] for x in oc_plist["ACPI"]["Patch"]):
+                            print(" -> Patch \"{}\" already in OC plist!".format(p["Comment"]))
+                else:
+                    oc_plist["ACPI"]["Patch"].append(self.get_oc_patch(p))
+                    print(" -> Adding Patch \"{}\" to OC plist!".format(p["Comment"]))
+                if os.path.isfile(os.path.join(output,"patches_Clover.plist")):
+                    if cl_plist["ACPI"]["DSDT"]["Patches"][0]:
+                        if any((x)["Comment"] == p["Comment"] for x in cl_plist["ACPI"]["DSDT"]["Patches"]):
+                            print(" -> Patch \"{}\" already in Clover plist!".format(p["Comment"]))
+                else:
+                    cl_plist["ACPI"]["DSDT"]["Patches"].append(self.get_clover_patch(p))
+                    print(" -> Adding Patch \"{}\" to Clover plist!".format(p["Comment"]))          
+                
+        # Write the plists
+        with open(os.path.join(output,"patches_OC.plist"),"wb") as f:
+            plist.dump(oc_plist,f)
+        with open(os.path.join(output,"patches_Clover.plist"),"wb") as f:
+            plist.dump(cl_plist,f)
 
     def fake_ec(self):
+        rename = False
         if not self.ensure_dsdt():
             return
         self.u.head("Fake EC")
@@ -85,13 +177,19 @@ class SSDT:
                 # We need to check for _HID, _CRS, and _GPE
                 if all((y in scope for y in ["_HID","_CRS","_GPE"])):
                     print(" ----> Valid EC Device")
+                    if device == "EC":
+                        print(" ----> EC called EC. Renaming")
+                        device = "EC0"
+                        rename = True
+                    else:
+                        rename = False
                     ec_to_patch.append(device)
                 else:
                     print(" ----> NOT Valid EC Device")
         else:
             print(" - None found - only needs a Fake EC device")
         print("Locating LPC(B)/SBRG...")
-        lpc_name = next((x for x in ("LPCB","LPC","SBRG") if x in self.d.dsdt),None)
+        lpc_name = next((x for x in ("LPCB","LPC","SBRG") if self.find_substring(x,self.d.dsdt)),None)
         if not lpc_name:
             print(" - Could not locate LPC(B)! Aborting!")
             print("")
@@ -99,6 +197,13 @@ class SSDT:
             return
         else:
             print(" - Found {}".format(lpc_name))
+        if rename == True:
+            patches = [{"Comment":"EC to EC0","Find":"45435f5f","Replace":"4543305f"}]  
+            oc = {"Comment":"SSDT-EC (Needs EC to EC0 rename)","Enabled":True,"Path":"SSDT-EC.aml"}
+        else:
+            patches = None
+            oc = {"Comment":"SSDT-EC","Enabled":True,"Path":"SSDT-EC.aml"}
+        self.make_plist(oc, "SSDT-EC.aml", patches)
         print("Creating SSDT-EC...")
         ssdt = """
 DefinitionBlock ("", "SSDT", 2, "APPLE ", "SsdtEC", 0x00001000)
@@ -166,6 +271,8 @@ DefinitionBlock ("", "SSDT", 2, "APPLE ", "SsdtEC", 0x00001000)
             return
         else:
             print(" - Found {}".format(cpu_name))
+        oc = {"Comment":"Plugin Type","Enabled":True,"Path":"SSDT-PLUG.aml"}
+        self.make_plist(oc, "SSDT-PLUG.aml", None)
         print("Creating SSDT-PLUG...")
         ssdt = """
 DefinitionBlock ("", "SSDT", 2, "CpuRef", "CpuPlug", 0x00003000)
@@ -523,31 +630,32 @@ DefinitionBlock ("", "SSDT", 2, "CpuRef", "CpuPlug", 0x00003000)
                 print("")
         # Restore the original DSDT in memory
         self.d.dsdt_raw = saved_dsdt
-        print("Locating LPC(B)/SBRG...")
-        lpc_name = next((x for x in ("LPCB","LPC","SBRG") if x in self.d.dsdt),None)
-        if not lpc_name:
-            print(" - Could not locate LPC(B)! Aborting!")
-            print("")
+        print("Locating HPET...")
+        try:
+            for x in self.d.get_scope(self.d.get_devices("HPET", strip_comments=True)[0][1]):
+                if "HPET." in x:
+                    scope = x
+                    break
+            while scope[:1] != "\\":
+                scope = scope[1:]
+            scope = scope[1:]
+            while scope[-4:] != "HPET":
+                scope = scope[:-1]
+            scope = scope[:-5]
+            if "_SB" in scope:
+                scope = scope.replace("_SB", "_SB_")
+            if scope == "":
+                scope = "HPET"
+                name = scope
+            else:
+                name = scope + ".HPET"
+            print("Location: {}".format(scope))
+        except:
+            print("HPET could not be located.")
             self.u.grab("Press [enter] to return to main menu...")
-            return
-        else:
-            print(" - Found {}".format(lpc_name))
-        print("Building patches_OC and patches_Clover plists...")
-        oc_plist = {"ACPI":{"Patch":[]}}
-        cl_plist = {"ACPI":{"DSDT":{"Patches":[]}}}
-        # Add the SSDT to the dicts
-        oc_plist["ACPI"]["Add"] = [{"Comment":"HPET _CRS (Needs _CRS to XCRS Rename)","Enabled":True,"Path":"SSDT-HPET.aml"}]
-        cl_plist["ACPI"]["SortedOrder"] = ["SSDT-HPET.aml"]
-        # Iterate the patches
-        for p in patches:
-            oc_plist["ACPI"]["Patch"].append(self.get_oc_patch(p))
-            cl_plist["ACPI"]["DSDT"]["Patches"].append(self.get_clover_patch(p))
-        # Write the plists
-        output = self.check_output()
-        with open(os.path.join(output,"patches_OC.plist"),"wb") as f:
-            plist.dump(oc_plist,f)
-        with open(os.path.join(output,"patches_Clover.plist"),"wb") as f:
-            plist.dump(cl_plist,f)
+            return     
+        oc = {"Comment":"HPET _CRS (Needs _CRS to XCRS Rename)","Enabled":True,"Path":"SSDT-HPET.aml"}
+        self.make_plist(oc, "SSDT-HPET.aml", patches)
         print("Creating SSDT-HPET...")
         ssdt = """//
 // Supplementary HPET _CRS from Goldfish64
@@ -555,8 +663,8 @@ DefinitionBlock ("", "SSDT", 2, "CpuRef", "CpuPlug", 0x00003000)
 //
 DefinitionBlock ("", "SSDT", 2, "hack", "HPET", 0x00000000)
 {
-    External (_SB_.PCI0.[[LPCName]], DeviceObj)    // (from opcode)
-    Name (\_SB.PCI0.[[LPCName]].HPET._CRS, ResourceTemplate ()  // _CRS: Current Resource Settings
+    External ([[ext]], DeviceObj)    // (from opcode)
+    Name (\[[name]]._CRS, ResourceTemplate ()  // _CRS: Current Resource Settings
     {
         IRQNoFlags ()
             {0,8,11}
@@ -566,7 +674,7 @@ DefinitionBlock ("", "SSDT", 2, "hack", "HPET", 0x00000000)
             )
     })
 }
-""".replace("[[LPCName]]",lpc_name)
+""".replace("[[ext]]",scope).replace("[[name]]",name)
         self.write_ssdt("SSDT-HPET",ssdt)
         print("")
         print("Done.")
@@ -582,6 +690,8 @@ DefinitionBlock ("", "SSDT", 2, "hack", "HPET", 0x00000000)
         print("1. FixHPET    - Patch out IRQ Conflicts")
         print("2. FakeEC     - OS-aware Fake EC")
         print("3. PluginType - Sets plugin-type = 1 on CPU0/PR00")
+        if sys.platform == "linux":
+            print("4. Dump DSDT  - Automatically dump the system DSDT")
         print("")
         print("D. Select DSDT or origin folder")
         print("Q. Quit")
@@ -600,6 +710,12 @@ DefinitionBlock ("", "SSDT", 2, "hack", "HPET", 0x00000000)
             self.fake_ec()
         elif menu == "3":
             self.plugin_type()
+        elif menu == "4":
+            if sys.platform == "linux":
+                self.dsdt = self.dump_dsdt()
+            else:
+                return
+
         return
 
 if __name__ == '__main__':
