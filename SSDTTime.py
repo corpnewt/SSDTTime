@@ -189,7 +189,7 @@ class SSDT:
         else:
             print(" - None found - only needs a Fake EC device")
         print("Locating LPC(B)/SBRG...")
-        lpc_name = next((x for x in ("LPCB","LPC","SBRG") if self.find_substring(x,self.d.dsdt)),None)
+        lpc_name = next((x for x in ("LPCB","LPC0","LPC","SBRG") if self.find_substring(x,self.d.dsdt)),None)
         if not lpc_name:
             print(" - Could not locate LPC(B)! Aborting!")
             print("")
