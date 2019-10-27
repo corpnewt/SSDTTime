@@ -651,7 +651,7 @@ DefinitionBlock ("", "SSDT", 2, "CpuRef", "CpuPlug", 0x00003000)
             while scope[-4:] != "HPET":
                 scope = scope[:-1]
             scope = scope[:-5]
-            if "_SB" in scope:
+            if "_SB" == scope:
                 scope = scope.replace("_SB", "_SB_")
             if scope == "":
                 scope = "HPET"
