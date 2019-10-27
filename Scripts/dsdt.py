@@ -9,7 +9,7 @@ class DSDT:
         self.dl = downloader.Downloader()
         self.r  = run.Run()
         self.iasl_url_macOS = "https://bitbucket.org/RehabMan/acpica/downloads/iasl.zip"
-        self.iasl_url_linux = "http://files.kellycloud.tk/AMDOSX/iasl.zip"
+        self.iasl_url_linux = "http://amdosx.kellynet.nl/iasl.zip"
         self.iasl = self.check_iasl()
         if not self.iasl:
             return None

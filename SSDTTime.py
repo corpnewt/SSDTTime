@@ -189,7 +189,7 @@ class SSDT:
         else:
             print(" - None found - only needs a Fake EC device")
         print("Locating LPC(B)/SBRG...")
-        lpc_name = next((x for x in ("LPCB","LPC","SBRG") if self.find_substring(x,self.d.dsdt)),None)
+        lpc_name = next((x for x in ("LPCB","LPC0","LPC","SBRG") if self.find_substring(x,self.d.dsdt)),None)
         if not lpc_name:
             print(" - Could not locate LPC(B)! Aborting!")
             print("")
@@ -271,14 +271,23 @@ DefinitionBlock ("", "SSDT", 2, "APPLE ", "SsdtEC", 0x00001000)
             return
         else:
             print(" - Found {}".format(cpu_name))
+        print("Determining CPU parent name scheme...")
+        cpu_p_name = next((x for x in ("_PR_","_SB_") if "{}.{}".format(x,cpu_name) in self.d.dsdt),None)
+        if not cpu_p_name:
+            print(" - Could not locate {} parent! Aborting!".format(cpu_name))
+            print("")
+            self.u.grab("Press [enter] to return to main menu...")
+            return
+        else:
+            print(" - Found {}".format(cpu_p_name))
         oc = {"Comment":"Plugin Type","Enabled":True,"Path":"SSDT-PLUG.aml"}
         self.make_plist(oc, "SSDT-PLUG.aml", None)
         print("Creating SSDT-PLUG...")
         ssdt = """
 DefinitionBlock ("", "SSDT", 2, "CpuRef", "CpuPlug", 0x00003000)
 {
-    External (_PR_.[[CPUName]], ProcessorObj)
-    Scope (\_PR.[[CPUName]])
+    External ([[CPUPName]].[[CPUName]], ProcessorObj)
+    Scope (\[[CPUPName]].[[CPUName]])
     {
         Method (DTGP, 5, NotSerialized)
         {
@@ -317,7 +326,7 @@ DefinitionBlock ("", "SSDT", 2, "CpuRef", "CpuPlug", 0x00003000)
             Return (Local0)
         }
     }
-}""".replace("[[CPUName]]",cpu_name)
+}""".replace("[[CPUName]]",cpu_name).replace("[[CPUPName]]",cpu_p_name)
         self.write_ssdt("SSDT-PLUG",ssdt)
         print("")
         print("Done.")
