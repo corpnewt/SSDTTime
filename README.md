@@ -1,6 +1,7 @@
 SSDTTime
 ==========
 A simple tool designed to make creating SSDTs simple.
+Supports macOS, Linux and Windows
 
 ### Supported SSDTs:
 - SSDT-EC
@@ -10,7 +11,7 @@ A simple tool designed to make creating SSDTs simple.
 - SSDT-HPET
     - Patches out IRQ conflicts
     
-Additionally on Linux the tool can be used to dump the system DSDT.
+Additionally on Linux and Windows the tool can be used to dump the system DSDT.
 
 ### Credits:
 - [CorpNewt](https://github.com/CorpNewt) - Writing the script and libraries used
