@@ -3,7 +3,7 @@ SSDTTime
 A simple tool designed to make creating SSDTs simple.
 Supports macOS, Linux and Windows
 
-### Supported SSDTs:
+## Supported SSDTs:
 - SSDT-EC
     - OS-aware fake EC
 - SSDT-PLUG
@@ -13,15 +13,15 @@ Supports macOS, Linux and Windows
     
 Additionally on Linux and Windows the tool can be used to dump the system DSDT.
 
-### Instructions:
-# Linux:
-Launch SSDTTime.py with any somewhat recent version of Python from either a terminal window or by running the file normally.
-# macOS:
-Launch SSDTTime.command from either a terminal window or by double clicking the file.
-# Windows:
-Launch SSDTTime.bat from either a terminal window or by double clicking the file.
+## Instructions:
+### Linux:
+* Launch SSDTTime.py with any somewhat recent version of Python from either a terminal window or by running the file normally.
+### macOS:
+* Launch SSDTTime.command from either a terminal window or by double clicking the file.
+### Windows:
+* Launch SSDTTime.bat from either a terminal window or by double clicking the file.
 
-### Credits:
+## Credits:
 - [CorpNewt](https://github.com/CorpNewt) - Writing the script and libraries used
 - [NoOne](https://github.com/IOIIIO) - Some small improvements to the script
 - Rehabman/Intel - iasl
