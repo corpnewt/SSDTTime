@@ -12,7 +12,7 @@ class DSDT:
         self.iasl_url_linux = "http://amdosx.kellynet.nl/iasl.zip"
         self.iasl = self.check_iasl()
         if not self.iasl:
-            return None
+            raise Exception("Could not locate or download iasl!")
         self.dsdt       = None
         self.dsdt_raw   = None
         self.dsdt_lines = None
