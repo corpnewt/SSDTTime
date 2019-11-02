@@ -9,7 +9,11 @@ class SSDT:
         self.u    = utils.Utils("SSDT Time")
         self.r    = run.Run()
         self.re   = reveal.Reveal()
-        self.d    = dsdt.DSDT()
+        try:
+            self.d = dsdt.DSDT()
+        except Exception as e:
+            print("Something went wrong :( - Aborting!\n - {}".format(e))
+            exit(1)
         self.iasl = None
         self.dsdt = None
         self.scripts = "Scripts"
