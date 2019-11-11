@@ -30,12 +30,6 @@ class SSDT:
             return False
         return True
 
-    def check_output(self):
-        t_folder = os.path.join(os.path.dirname(os.path.realpath(__file__)), self.output)
-        if not os.path.isdir(t_folder):
-            os.mkdir(t_folder)
-        return t_folder
-
     def select_dsdt(self):
         self.u.head("Select DSDT")
         print(" ")
@@ -53,37 +47,6 @@ class SSDT:
                 return out
         return self.select_dsdt()
 
-    def dump_dsdt(self):
-        self.u.head("Dumping DSDT")
-        print("")
-        print("Checking if DSDT exists")
-        res = self.check_output()
-        e = "/sys/firmware/acpi/tables/DSDT"
-        dsdt_path = os.path.join(res,"DSDT.aml")
-        if os.path.isfile(e):
-            print("Copying DSDT to safe location.")
-            print("You have to enter your password to copy the file:")
-            out = self.r.run({"args":["sudo", "cp", e, dsdt_path]})
-            if out[2] != 0:
-                print(" - {}".format(out[1]))
-            print("Changing file ownership")
-            out = self.r.run({"args":["sudo", "chown", getpass.getuser(), dsdt_path]})
-            if out[2] != 0:
-                print(" - {}".format(out[1]))
-            print("Success!")
-            if self.d.load(dsdt_path):
-                self.u.grab("Press [enter] to return to main menu...")
-                return dsdt_path
-            else:
-                print("Loading file failed!")
-                self.u.grab("Press [enter] to return to main menu...")
-                return 
-        else:
-            print("Couldn't find DSDT table")
-            self.u.grab("Press [enter] to return to main menu...")
-            return 
-
-
     def ensure_dsdt(self):
         if self.dsdt and self.d.dsdt:
             # Got it already
@@ -95,10 +58,13 @@ class SSDT:
         return False
 
     def write_ssdt(self, ssdt_name, ssdt):
-        res = self.check_output()
+        res = self.d.check_output(self.output)
         dsl_path = os.path.join(res,ssdt_name+".dsl")
         aml_path = os.path.join(res,ssdt_name+".aml")
-        iasl_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), self.scripts, "iasl")
+        if sys.platform == "win32":
+            iasl_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), self.scripts, "iasl.exe")
+        else:
+            iasl_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), self.scripts, "iasl")
         with open(dsl_path,"w") as f:
             f.write(ssdt)
         print("Compiling...")
@@ -114,7 +80,7 @@ class SSDT:
     def make_plist(self, oc_acpi, cl_acpi, patches):
         repeat = False
         print("Building patches_OC and patches_Clover plists...")
-        output = self.check_output()
+        output = self.d.check_output(self.output)
         if os.path.isfile(os.path.join(output,"patches_OC.plist")): 
             e = os.path.join(output,"patches_OC.plist")
             with open(e, "rb") as f:
@@ -655,7 +621,7 @@ DefinitionBlock ("", "SSDT", 2, "CpuRef", "CpuPlug", 0x00003000)
             while scope[-4:] != "HPET":
                 scope = scope[:-1]
             scope = scope[:-5]
-            if "_SB" in scope:
+            if "_SB" == scope:
                 scope = scope.replace("_SB", "_SB_")
             if scope == "":
                 scope = "HPET"
@@ -703,7 +669,7 @@ DefinitionBlock ("", "SSDT", 2, "hack", "HPET", 0x00000000)
         print("1. FixHPET    - Patch out IRQ Conflicts")
         print("2. FakeEC     - OS-aware Fake EC")
         print("3. PluginType - Sets plugin-type = 1 on CPU0/PR00")
-        if sys.platform == "linux":
+        if sys.platform == "linux" or sys.platform == "win32":
             print("4. Dump DSDT  - Automatically dump the system DSDT")
         print("")
         print("D. Select DSDT or origin folder")
@@ -724,8 +690,8 @@ DefinitionBlock ("", "SSDT", 2, "hack", "HPET", 0x00000000)
         elif menu == "3":
             self.plugin_type()
         elif menu == "4":
-            if sys.platform == "linux":
-                self.dsdt = self.dump_dsdt()
+            if sys.platform == "linux" or sys.platform == "win32":
+                self.dsdt = self.d.dump_dsdt(self.output)
             else:
                 return
 

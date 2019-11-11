@@ -2,14 +2,16 @@
 # 0.0.0
 import os, tempfile, shutil, plistlib, sys, binascii, zipfile
 sys.path.append(os.path.abspath(os.path.dirname(os.path.realpath(__file__))))
-import run, downloader
+import run, downloader, utils
 
 class DSDT:
     def __init__(self, **kwargs):
         self.dl = downloader.Downloader()
         self.r  = run.Run()
+        self.u    = utils.Utils("SSDT Time")
         self.iasl_url_macOS = "https://bitbucket.org/RehabMan/acpica/downloads/iasl.zip"
         self.iasl_url_linux = "http://amdosx.kellynet.nl/iasl.zip"
+        self.iasl_url_windows = "https://acpica.org/sites/acpica/files/iasl-win-20180105.zip"
         self.iasl = self.check_iasl()
         if not self.iasl:
             raise Exception("Could not locate or download iasl!")
@@ -53,10 +55,16 @@ class DSDT:
             os.chdir(temp)
             if got_origin:
                 # Have at least one SSDT to use while decompiling
-                out = self.r.run({"args":"{} -da -dl -l DSDT.aml SSDT*".format(self.iasl),"shell":True})
+                if sys.platform == "win32":
+                    out = self.r.run({"args":"{} -dl -l DSDT.aml SSDT*".format(self.iasl),"shell":True})
+                else:
+                    out = self.r.run({"args":"{} -da -dl -l DSDT.aml SSDT*".format(self.iasl),"shell":True})
             else:
                 # Just the DSDT - might be incomplete though
-                out = self.r.run({"args":[self.iasl,"-da","-dl","-l",dsdt_path]})
+                if sys.platform == "win32":
+                    out = self.r.run({"args":[self.iasl,"-dl","-l",dsdt_path]})
+                else:
+                    out = self.r.run({"args":[self.iasl,"-da","-dl","-l",dsdt_path]})
             if out[2] != 0 or not os.path.exists(dsdt_l_path):
                 raise Exception("Failed to decompile {}".format(os.path.basename(dsdt_path)))
             with open(dsdt_l_path,"r") as f:
@@ -72,7 +80,10 @@ class DSDT:
         return ret
     
     def check_iasl(self):
-        target = os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl")
+        if sys.platform == "win32":
+            target = os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl.exe")
+        else:
+            target = os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl")
         if not os.path.exists(target):
             # Need to download
             temp = tempfile.mkdtemp()
@@ -81,6 +92,8 @@ class DSDT:
                     self._download_and_extract(temp,self.iasl_url_macOS)
                 elif sys.platform == "linux":
                     self._download_and_extract(temp,self.iasl_url_linux)
+                elif sys.platform == "win32":
+                    self._download_and_extract(temp,self.iasl_url_windows)
                 else: 
                     raise Exception  
             except Exception as e:
@@ -105,10 +118,85 @@ class DSDT:
             if "iasl" in x.lower():
                 # Found one
                 print(" - Found {}".format(x))
-                print("   - Chmod +x")
-                self.r.run({"args":["chmod","+x",os.path.join(btemp,x)]})
+                if sys.platform != "win32":
+                    print("   - Chmod +x")
+                    self.r.run({"args":["chmod","+x",os.path.join(btemp,x)]})
                 print("   - Copying to {} directory".format(os.path.basename(script_dir)))
                 shutil.copy(os.path.join(btemp,x), os.path.join(script_dir,x))
+            if "acpidump" in x.lower():
+                if sys.platform == "win32":
+                    # Found one
+                    print(" - Found {}".format(x))
+                    print("   - Copying to {} directory".format(os.path.basename(script_dir)))
+                    shutil.copy(os.path.join(btemp,x), os.path.join(script_dir,x))
+
+    def dump_dsdt(self, output):
+        self.u.head("Dumping DSDT")
+        print("")
+        res = self.check_output(output)
+        if sys.platform == "linux":
+            print("Checking if DSDT exists")
+            e = "/sys/firmware/acpi/tables/DSDT"
+            dsdt_path = os.path.join(res,"DSDT.aml")
+            if os.path.isfile(e):
+                print("Copying DSDT to safe location.")
+                print("You have to enter your password to copy the file:")
+                out = self.r.run({"args":["sudo", "cp", e, dsdt_path]})
+                if out[2] != 0:
+                    print(" - {}".format(out[1]))
+                print("Changing file ownership")
+                out = self.r.run({"args":["sudo", "chown", getpass.getuser(), dsdt_path]})
+                if out[2] != 0:
+                    print(" - {}".format(out[1]))
+                print("Success!")
+                if self.load(dsdt_path):
+                    self.u.grab("Press [enter] to return to main menu...")
+                    return dsdt_path
+                else:
+                    print("Loading file failed!")
+                    self.u.grab("Press [enter] to return to main menu...")
+                    return 
+            else:
+                print("Couldn't find DSDT table")
+                self.u.grab("Press [enter] to return to main menu...")
+                return 
+        elif sys.platform == "win32":
+            print("Dumping DSDT table")
+            target = os.path.join(res, "acpidump.exe").replace("Results", "Scripts")
+            dump = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "dsdt.dat")
+            res = self.check_output(output)
+            dsdt_path = os.path.join(res,"DSDT.aml")
+            if os.path.exists(target):
+                out = self.r.run({"args":[target, "-b", "-n", "dsdt"]})
+                if out[2] != 0:
+                    print(" - {}".format(out[1]))
+                    return
+                print("Dump successful!")
+                print("Moving DSDT to better location.")
+                shutil.move(dump,dsdt_path)
+                if self.load(dsdt_path):
+                    print("Success!")
+                    self.u.grab("Press [enter] to return to main menu...")
+                    return dsdt_path
+                else:
+                    print("Loading file failed!")
+                    self.u.grab("Press [enter] to return to main menu...")
+                    return 
+            else:
+                print("Failed to locate acpidump.exe")
+                self.u.grab("Press [enter] to return to main menu...")
+                return 
+        else:
+            print("Unsupported platform for DSDT dumping.")
+            self.u.grab("Press [enter] to return to main menu...")
+            return 
+
+
+    def check_output(self, output):
+        t_folder = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), output)
+        if not os.path.isdir(t_folder):
+            os.mkdir(t_folder)
+        return t_folder
 
     def get_hex_from_int(self, total, pad_to = 4):
         hex_str = hex(total)[2:].upper().rjust(pad_to,"0")
