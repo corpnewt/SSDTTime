@@ -76,52 +76,56 @@ class SSDT:
         else:
             self.re.reveal(aml_path,True)
         return True
+
+    def ensure_path(self, plist_data, path_list, final_type = list):
+        if not path_list: return plist_data
+        last = plist_data
+        for path in path_list:
+            if not path in last:
+                last[path] = {}
+            last = last[path]
+        if not last: last = final_type()
+        return plist_data
     
     def make_plist(self, oc_acpi, cl_acpi, patches):
+        if not len(patches): return # No patches to add - bail
         repeat = False
         print("Building patches_OC and patches_Clover plists...")
         output = self.d.check_output(self.output)
+        oc_plist = {}
+        cl_plist = {}
+
+        # Check for the plists
         if os.path.isfile(os.path.join(output,"patches_OC.plist")): 
             e = os.path.join(output,"patches_OC.plist")
             with open(e, "rb") as f:
                 oc_plist = plist.load(f)
+        if os.path.isfile(os.path.join(output,"patches_Clover.plist")): 
             e = os.path.join(output,"patches_Clover.plist")
             with open(e,"rb") as f:
                 cl_plist = plist.load(f)
-            if oc_acpi not in oc_plist["ACPI"]["Add"]:
-                if oc_plist["ACPI"]["Add"][0]:
-                    oc_plist["ACPI"]["Add"].append(oc_acpi)
-                else:
-                    oc_plist["ACPI"]["Add"] = [oc_acpi]
-            if cl_acpi not in cl_plist["ACPI"]["SortedOrder"]:
-                if cl_plist["ACPI"]["SortedOrder"][0]:
-                    cl_plist["ACPI"]["SortedOrder"].append(cl_acpi)
-                else:
-                    cl_plist["ACPI"]["SortedOrder"] = [cl_acpi]
-        else:
-            oc_plist = {"ACPI":{"Patch":[]}}
-            cl_plist = {"ACPI":{"DSDT":{"Patches":[]}}}
-            # Add the SSDT to the dicts
-            oc_plist["ACPI"]["Add"] = [oc_acpi]
-            cl_plist["ACPI"]["SortedOrder"] = [cl_acpi]    
+        
+        # Ensure all the pathing is where it needs to be
+        oc_plist = self.ensure_path(oc_plist,("ACPI","Add"))
+        cl_plist = self.ensure_path(cl_plist,("ACPI","SortedOrder"))
+        cl_plist = self.ensure_path(cl_plist,("ACPI","DSDT","Patches"))
+
+        # Add the .aml references
+        oc_plist["ACPI"]["Add"].append(oc_acpi)
+        cl_plist["ACPI"]["SortedOrder"].append(cl_acpi)
+
         # Iterate the patches
-        if patches != None:
-            for p in patches:
-                if os.path.isfile(os.path.join(output,"patches_OC.plist")):
-                    if oc_plist["ACPI"]["Patch"][0]:
-                        if any((x)["Comment"] == p["Comment"] for x in oc_plist["ACPI"]["Patch"]):
-                            print(" -> Patch \"{}\" already in OC plist!".format(p["Comment"]))
-                else:
-                    oc_plist["ACPI"]["Patch"].append(self.get_oc_patch(p))
-                    print(" -> Adding Patch \"{}\" to OC plist!".format(p["Comment"]))
-                if os.path.isfile(os.path.join(output,"patches_Clover.plist")):
-                    if cl_plist["ACPI"]["DSDT"]["Patches"][0]:
-                        if any((x)["Comment"] == p["Comment"] for x in cl_plist["ACPI"]["DSDT"]["Patches"]):
-                            print(" -> Patch \"{}\" already in Clover plist!".format(p["Comment"]))
-                else:
-                    cl_plist["ACPI"]["DSDT"]["Patches"].append(self.get_clover_patch(p))
-                    print(" -> Adding Patch \"{}\" to Clover plist!".format(p["Comment"]))          
-                
+        for p in patches:
+            if any(x["Comment"] == p["Comment"] for x in oc_plist["ACPI"]["Patch"]):
+                print(" -> Patch \"{}\" already in OC plist!".format(p["Comment"]))
+            else:
+                print(" -> Adding Patch \"{}\" to OC plist!".format(p["Comment"]))
+                oc_plist["ACPI"]["Patch"].append(self.get_oc_patch(p))
+            if any(x["Comment"] == p["Comment"] for x in cl_plist["ACPI"]["DSDT"]["Patches"]):
+                print(" -> Patch \"{}\" already in Clover plist!".format(p["Comment"]))
+            else:
+                print(" -> Adding Patch \"{}\" to Clover plist!".format(p["Comment"]))
+                cl_plist["ACPI"]["DSDT"]["Patches"].append(self.get_clover_patch(p))         
         # Write the plists
         with open(os.path.join(output,"patches_OC.plist"),"wb") as f:
             plist.dump(oc_plist,f)
@@ -251,7 +255,7 @@ DefinitionBlock ("", "SSDT", 2, "APPLE ", "SsdtEC", 0x00001000)
         else:
             print(" - Found {}".format(cpu_p_name))
         oc = {"Comment":"Plugin Type","Enabled":True,"Path":"SSDT-PLUG.aml"}
-        self.make_plist(oc, "SSDT-PLUG.aml", None)
+        self.make_plist(oc, "SSDT-PLUG.aml", ())
         print("Creating SSDT-PLUG...")
         ssdt = """
 DefinitionBlock ("", "SSDT", 2, "CpuRef", "CpuPlug", 0x00003000)
