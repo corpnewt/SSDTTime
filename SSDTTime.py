@@ -80,11 +80,13 @@ class SSDT:
     def ensure_path(self, plist_data, path_list, final_type = list):
         if not path_list: return plist_data
         last = plist_data
-        for path in path_list:
+        for index,path in enumerate(path_list):
             if not path in last:
-                last[path] = {}
+                if index >= len(path_list)-1:
+                    last[path] = final_type()
+                else:
+                    last[path] = {}
             last = last[path]
-        if not last: last = final_type()
         return plist_data
     
     def make_plist(self, oc_acpi, cl_acpi, patches):
@@ -107,12 +109,19 @@ class SSDT:
         
         # Ensure all the pathing is where it needs to be
         oc_plist = self.ensure_path(oc_plist,("ACPI","Add"))
+        oc_plist = self.ensure_path(oc_plist,("ACPI","Patch"))
         cl_plist = self.ensure_path(cl_plist,("ACPI","SortedOrder"))
         cl_plist = self.ensure_path(cl_plist,("ACPI","DSDT","Patches"))
 
         # Add the .aml references
-        oc_plist["ACPI"]["Add"].append(oc_acpi)
-        cl_plist["ACPI"]["SortedOrder"].append(cl_acpi)
+        if any(oc_acpi["Comment"] == x["Comment"] for x in oc_plist["ACPI"]["Add"]):
+            print(" -> Add \"{}\" already in OC plist!".format(oc_acpi["Comment"]))
+        else:
+            oc_plist["ACPI"]["Add"].append(oc_acpi)
+        if any(cl_acpi == x for x in cl_plist["ACPI"]["SortedOrder"]):
+            print(" -> \"{}\" already in Clover plist!".format(cl_acpi))
+        else:
+            cl_plist["ACPI"]["SortedOrder"].append(cl_acpi)
 
         # Iterate the patches
         for p in patches:
@@ -707,4 +716,8 @@ if __name__ == '__main__':
         try:
             s.main()
         except Exception as e:
-            print(e)
+            print("An error occurred: {}".format(e))
+            if 2/3 == 0: # Python 2
+                raw_input("Press [enter] to continue...")
+            else:
+                input("Press [enter] to continue...")
