@@ -175,7 +175,7 @@ class SSDT:
             patches = [{"Comment":"EC to EC0","Find":"45435f5f","Replace":"4543305f"}]  
             oc = {"Comment":"SSDT-EC (Needs EC to EC0 rename)","Enabled":True,"Path":"SSDT-EC.aml"}
         else:
-            patches = None
+            patches = ()
             oc = {"Comment":"SSDT-EC","Enabled":True,"Path":"SSDT-EC.aml"}
         self.make_plist(oc, "SSDT-EC.aml", patches)
         print("Creating SSDT-EC...")
