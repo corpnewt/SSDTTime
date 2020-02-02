@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # 0.0.0
-import os, tempfile, shutil, plistlib, sys, binascii, zipfile
+import getpass, os, tempfile, shutil, plistlib, sys, binascii, zipfile
 sys.path.append(os.path.abspath(os.path.dirname(os.path.realpath(__file__))))
 import run, downloader, utils
 
@@ -90,7 +90,7 @@ class DSDT:
             try:
                 if sys.platform == "darwin":
                     self._download_and_extract(temp,self.iasl_url_macOS)
-                elif sys.platform == "linux":
+                elif sys.platform.startswith('linux'):
                     self._download_and_extract(temp,self.iasl_url_linux)
                 elif sys.platform == "win32":
                     self._download_and_extract(temp,self.iasl_url_windows)
@@ -134,7 +134,7 @@ class DSDT:
         self.u.head("Dumping DSDT")
         print("")
         res = self.check_output(output)
-        if sys.platform == "linux":
+        if sys.platform.startswith('linux'):
             print("Checking if DSDT exists")
             e = "/sys/firmware/acpi/tables/DSDT"
             dsdt_path = os.path.join(res,"DSDT.aml")
