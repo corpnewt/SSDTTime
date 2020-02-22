@@ -704,7 +704,7 @@ DefinitionBlock ("", "SSDT", 2, "hack", "HPET", 0x00000000)
             self.plugin_type()
         elif menu == "4":
             if sys.platform == "linux" or sys.platform == "win32":
-                self.dsdt = self.d.dump_dsdt(self.output)
+                self.dsdt = self.d.dump_dsdt(os.path.join(os.path.dirname(os.path.realpath(__file__)), self.output))
             else:
                 return
 
