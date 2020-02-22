@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # 0.0.0
-import os, tempfile, shutil, plistlib, sys, binascii, zipfile
+import os, tempfile, shutil, plistlib, sys, binascii, zipfile, getpass
 sys.path.append(os.path.abspath(os.path.dirname(os.path.realpath(__file__))))
 import run, downloader, utils
 
@@ -162,12 +162,15 @@ class DSDT:
                 return 
         elif sys.platform == "win32":
             print("Dumping DSDT table")
-            target = os.path.join(res, "acpidump.exe").replace("Results", "Scripts")
-            dump = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "dsdt.dat")
-            res = self.check_output(output)
+            target = os.path.join(os.path.dirname(os.path.realpath(__file__)),"acpidump.exe")
+            dump = os.path.join(res,"dsdt.dat")
             dsdt_path = os.path.join(res,"DSDT.aml")
             if os.path.exists(target):
+                # Dump to the target folder
+                cwd = os.getcwd()
+                os.chdir(res)
                 out = self.r.run({"args":[target, "-b", "-n", "dsdt"]})
+                os.chdir(cwd)
                 if out[2] != 0:
                     print(" - {}".format(out[1]))
                     return
