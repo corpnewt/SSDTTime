@@ -189,7 +189,7 @@ class SSDT:
         self.make_plist(oc, "SSDT-EC.aml", patches)
         print("Creating SSDT-EC...")
         ssdt = """
-DefinitionBlock ("", "SSDT", 2, "APPLE ", "SsdtEC", 0x00001000)
+DefinitionBlock ("", "SSDT", 2, "CORP ", "SsdtEC", 0x00001000)
 {
     External (_SB_.PCI0.[[LPCName]], DeviceObj)
 """.replace("[[LPCName]]",lpc_name)
@@ -267,7 +267,7 @@ DefinitionBlock ("", "SSDT", 2, "APPLE ", "SsdtEC", 0x00001000)
         self.make_plist(oc, "SSDT-PLUG.aml", ())
         print("Creating SSDT-PLUG...")
         ssdt = """
-DefinitionBlock ("", "SSDT", 2, "CpuRef", "CpuPlug", 0x00003000)
+DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
 {
     External ([[CPUPName]].[[CPUName]], ProcessorObj)
     Scope (\[[CPUPName]].[[CPUName]])
@@ -653,7 +653,7 @@ DefinitionBlock ("", "SSDT", 2, "CpuRef", "CpuPlug", 0x00003000)
 // Supplementary HPET _CRS from Goldfish64
 // Requires the HPET's _CRS to XCRS rename
 //
-DefinitionBlock ("", "SSDT", 2, "hack", "HPET", 0x00000000)
+DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
 {
     External ([[ext]], DeviceObj)    // (from opcode)
     Name (\[[name]]._CRS, ResourceTemplate ()  // _CRS: Current Resource Settings
