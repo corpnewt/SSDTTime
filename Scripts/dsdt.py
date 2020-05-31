@@ -2,7 +2,7 @@
 # 0.0.0
 import os, tempfile, shutil, plistlib, sys, binascii, zipfile, getpass
 sys.path.append(os.path.abspath(os.path.dirname(os.path.realpath(__file__))))
-import run, downloader, utils
+from . import run, downloader, utils
 
 class DSDT:
     def __init__(self, **kwargs):
