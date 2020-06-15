@@ -682,7 +682,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
         print("1. FixHPET    - Patch out IRQ Conflicts")
         print("2. FakeEC     - OS-aware Fake EC")
         print("3. PluginType - Sets plugin-type = 1 on CPU0/PR00")
-        if sys.platform == "linux" or sys.platform == "win32":
+        if sys.platform.startswith("linux") or sys.platform == "win32":
             print("4. Dump DSDT  - Automatically dump the system DSDT")
         print("")
         print("D. Select DSDT or origin folder")
@@ -703,7 +703,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
         elif menu == "3":
             self.plugin_type()
         elif menu == "4":
-            if sys.platform == "linux" or sys.platform == "win32":
+            if sys.platform.startswith("linux") or sys.platform == "win32":
                 self.dsdt = self.d.dump_dsdt(os.path.join(os.path.dirname(os.path.realpath(__file__)), self.output))
             else:
                 return
