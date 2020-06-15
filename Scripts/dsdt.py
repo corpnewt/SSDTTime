@@ -11,7 +11,7 @@ class DSDT:
         self.u    = utils.Utils("SSDT Time")
         self.iasl_url_macOS = "https://bitbucket.org/RehabMan/acpica/downloads/iasl.zip"
         self.iasl_url_linux = "http://amdosx.kellynet.nl/iasl.zip"
-        self.iasl_url_windows = "https://acpica.org/sites/acpica/files/iasl-win-20180105.zip"
+        self.iasl_url_windows = "https://acpica.org/sites/acpica/files/iasl-win-20200528.zip"
         self.iasl = self.check_iasl()
         if not self.iasl:
             raise Exception("Could not locate or download iasl!")
