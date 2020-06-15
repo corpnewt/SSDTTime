@@ -656,6 +656,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
 DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
 {
     External ([[ext]], DeviceObj)    // (from opcode)
+    External ([[name]], DeviceObj)    // (from opcode)
     Name (\[[name]]._CRS, ResourceTemplate ()  // _CRS: Current Resource Settings
     {
         IRQNoFlags ()
