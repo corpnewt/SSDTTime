@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # 0.0.0
-import os, tempfile, shutil, plistlib, sys, binascii, zipfile, getpass
+import os, tempfile, shutil, plistlib, sys, binascii, zipfile, getpass, subprocess
 sys.path.append(os.path.abspath(os.path.dirname(os.path.realpath(__file__))))
 import run, downloader, utils
 
@@ -83,7 +83,7 @@ class DSDT:
         if sys.platform == "win32":
             target = os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl.exe")
         else:
-            target = os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl")
+            target = subprocess.run(["which", "iasl"], text=True, stdout=subprocess.PIPE).stdout.strip()
         if not os.path.exists(target):
             # Need to download
             temp = tempfile.mkdtemp()
