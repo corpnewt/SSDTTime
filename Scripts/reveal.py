@@ -1,6 +1,6 @@
 import sys, os
 sys.path.append(os.path.abspath(os.path.dirname(os.path.realpath(__file__))))
-import run
+from . import run
 
 class Reveal:
 
