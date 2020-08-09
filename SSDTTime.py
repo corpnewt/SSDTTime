@@ -623,29 +623,13 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
         # Restore the original DSDT in memory
         self.d.dsdt_raw = saved_dsdt
         print("Locating HPET...")
-        try:
-            for x in self.d.get_scope(self.d.get_devices("HPET", strip_comments=True)[0][1]):
-                if "HPET." in x:
-                    scope = x
-                    break
-            while scope[:1] != "\\":
-                scope = scope[1:]
-            scope = scope[1:]
-            while scope[-4:] != "HPET":
-                scope = scope[:-1]
-            scope = scope[:-5]
-            if "_SB" == scope:
-                scope = scope.replace("_SB", "_SB_")
-            if scope == "":
-                scope = "HPET"
-                name = scope
-            else:
-                name = scope + ".HPET"
-            print("Location: {}".format(scope))
-        except:
+        hpet = self.d.get_device_paths("HPET")
+        if not hpet:
             print("HPET could not be located.")
             self.u.grab("Press [enter] to return to main menu...")
-            return     
+            return
+        name  = hpet[0][0]
+        scope = ".".join(name.split(".")[:-1]) 
         oc = {"Comment":"HPET _CRS (Needs _CRS to XCRS Rename)","Enabled":True,"Path":"SSDT-HPET.aml"}
         self.make_plist(oc, "SSDT-HPET.aml", patches)
         print("Creating SSDT-HPET...")
@@ -657,7 +641,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
 {
     External ([[ext]], DeviceObj)    // (from opcode)
     External ([[name]], DeviceObj)    // (from opcode)
-    Name (\[[name]]._CRS, ResourceTemplate ()  // _CRS: Current Resource Settings
+    Name ([[name]]._CRS, ResourceTemplate ()  // _CRS: Current Resource Settings
     {
         IRQNoFlags ()
             {0,8,11}
