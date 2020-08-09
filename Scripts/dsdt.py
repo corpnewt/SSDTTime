@@ -1,8 +1,5 @@
-#!/usr/bin/env python
-# 0.0.0
 import os, tempfile, shutil, plistlib, sys, binascii, zipfile, getpass
-sys.path.append(os.path.abspath(os.path.dirname(os.path.realpath(__file__))))
-import run, downloader, utils
+from . import run, downloader, utils
 
 class DSDT:
     def __init__(self, **kwargs):
@@ -18,6 +15,8 @@ class DSDT:
         self.dsdt       = None
         self.dsdt_raw   = None
         self.dsdt_lines = None
+        self.dsdt_scope = []
+        self.dsdt_paths = []
 
     def load(self, dsdt): # Requires the full path
         cwd = os.getcwd()
@@ -70,6 +69,7 @@ class DSDT:
             with open(dsdt_l_path,"r") as f:
                 self.dsdt = f.read()
                 self.dsdt_lines = self.dsdt.split("\n")
+                self.dsdt_paths = self.get_paths()
             with open(dsdt_path,"rb") as f:
                 self.dsdt_raw = f.read()
         except Exception as e:
@@ -345,3 +345,85 @@ class DSDT:
                 # We've exited the scope
                 return scope
         return scope
+
+    def get_scopes(self):
+        self.dsdt_scope = []
+        for index,line in enumerate(self.dsdt_lines):
+            if self.is_hex(line): continue
+            if any(x in line for x in ("Scope (","Device (","Method (")):
+                self.dsdt_scope.append((line,index))
+        return self.dsdt_scope
+
+    def get_paths(self):
+        if not self.dsdt_scope: self.get_scopes()
+        starting_indexes = []
+        for index,scope in enumerate(self.dsdt_scope):
+            if not scope[0].strip().startswith(("Device (","Method (")): continue
+            # Got a device - add its index
+            starting_indexes.append(index)
+        if not len(starting_indexes): return None
+        paths = []
+        for x in starting_indexes:
+            paths.append(self.get_path_starting_at(x))
+        return sorted(paths)
+
+    def get_path_of_type(self, obj_type="Device", obj="HPET"):
+        paths = []
+        for path in self.dsdt_paths:
+            if path[2].lower() == obj_type.lower() and path[0].upper().endswith(obj.upper()):
+                paths.append(path)
+        return sorted(paths)
+
+    def get_device_paths(self, obj="HPET"):
+        return self.get_path_of_type(obj_type="Device",obj=obj)
+
+    def get_method_paths(self, obj="_STA"):
+        return self.get_path_of_type(obj_type="Method",obj=obj)
+
+    def get_device_paths_with_hid(self, hid="ACPI000E"):
+        if not self.dsdt_scope: self.get_scopes()
+        starting_indexes = []
+        for index,line in enumerate(self.dsdt_lines):
+            if self.is_hex(line): continue
+            if hid.upper() in line.upper():
+                starting_indexes.append(index)
+        if not starting_indexes: return starting_indexes
+        devices = []
+        for i in starting_indexes:
+            # Walk backwards and get the next parent device
+            pad = len(self.dsdt_lines[i]) - len(self.dsdt_lines[i].lstrip(" "))
+            for sub,line in enumerate(self.dsdt_lines[i::-1]):
+                if "Device (" in line and len(line)-len(line.lstrip(" ")) < pad:
+                    # Add it if it's already in our dsdt_paths - if not, add the current line
+                    device = next((x for x in self.dsdt_paths if x[1]==i-sub),None)
+                    if device: devices.append(device)
+                    else: devices.append((line,i-sub))
+                    break
+        return devices
+
+    def get_path_starting_at(self, starting_index=0):
+        if not self.dsdt_scope: self.get_scopes()
+        # Walk the scope backwards, keeping track of changes
+        pad = None
+        path = []
+        obj_type = next((x for x in ("Method","Scope","Device") if x in self.dsdt_scope[starting_index][0]),"Unknown Type")
+        for scope,original_index in self.dsdt_scope[starting_index::-1]:
+            new_pad = scope.replace("Method","Scope").replace("Device","Scope").split("Scope (")[0]
+            if pad == None or new_pad < pad:
+                pad = new_pad
+                obj = scope.replace("Method","Scope").replace("Device","Scope").split("Scope (")[1].split(")")[0].split(",")[0]
+                path.append(obj)
+                if obj in ("_SB","_SB_","_PR","_PR_") or obj.startswith(("\\","_SB.","_SB_.","_PR.","_PR_.")): break # This is a full scope
+        path = path[::-1]
+        if len(path) and path[0] == "\\": path.pop(0)
+        if any(("^" in x for x in path)): # Accommodate caret notation
+            new_path = []
+            for x in path:
+                if x.count("^"):
+                    # Remove the last Y paths to account for going up a level
+                    del new_path[-1*x.count("^"):]
+                new_path.append(x.replace("^","")) # Add the original, removing any ^ chars
+            path = new_path
+        path = ".".join(path)
+        path = "\\"+path if path[0] != "\\" else path
+        return (path, self.dsdt_scope[starting_index][1], obj_type)
