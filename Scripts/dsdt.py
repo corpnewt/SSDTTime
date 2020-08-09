@@ -69,6 +69,7 @@ class DSDT:
             with open(dsdt_l_path,"r") as f:
                 self.dsdt = f.read()
                 self.dsdt_lines = self.dsdt.split("\n")
+                self.get_scopes()
                 self.dsdt_paths = self.get_paths()
             with open(dsdt_path,"rb") as f:
                 self.dsdt_raw = f.read()
