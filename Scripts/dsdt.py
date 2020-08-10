@@ -351,7 +351,7 @@ class DSDT:
         self.dsdt_scope = []
         for index,line in enumerate(self.dsdt_lines):
             if self.is_hex(line): continue
-            if any(x in line for x in ("Scope (","Device (","Method (")):
+            if any(x in line for x in ("Processor (","Scope (","Device (","Method (","Name (")):
                 self.dsdt_scope.append((line,index))
         return self.dsdt_scope
 
@@ -359,7 +359,7 @@ class DSDT:
         if not self.dsdt_scope: self.get_scopes()
         starting_indexes = []
         for index,scope in enumerate(self.dsdt_scope):
-            if not scope[0].strip().startswith(("Device (","Method (")): continue
+            if not scope[0].strip().startswith(("Processor (","Device (","Method (","Name (")): continue
             # Got a device - add its index
             starting_indexes.append(index)
         if not len(starting_indexes): return None
@@ -380,6 +380,12 @@ class DSDT:
 
     def get_method_paths(self, obj="_STA"):
         return self.get_path_of_type(obj_type="Method",obj=obj)
+
+    def get_name_paths(self, obj="CPU0"):
+        return self.get_path_of_type(obj_type="Name",obj=obj)
+
+    def get_processor_paths(self, obj="Processor"):
+        return self.get_path_of_type(obj_type="Processor",obj=obj)
 
     def get_device_paths_with_hid(self, hid="ACPI000E"):
         if not self.dsdt_scope: self.get_scopes()
@@ -402,17 +408,21 @@ class DSDT:
                     break
         return devices
 
+    def _normalize_types(self, line):
+        # Replaces Name, Processor, Device, and Method with Scope for splitting purposes
+        return line.replace("Name","Scope").replace("Processor","Scope").replace("Device","Scope").replace("Method","Scope")
+
     def get_path_starting_at(self, starting_index=0):
         if not self.dsdt_scope: self.get_scopes()
         # Walk the scope backwards, keeping track of changes
         pad = None
         path = []
-        obj_type = next((x for x in ("Method","Scope","Device") if x in self.dsdt_scope[starting_index][0]),"Unknown Type")
+        obj_type = next((x for x in ("Processor","Method","Scope","Device","Name") if x in self.dsdt_scope[starting_index][0]),"Unknown Type")
         for scope,original_index in self.dsdt_scope[starting_index::-1]:
-            new_pad = scope.replace("Method","Scope").replace("Device","Scope").split("Scope (")[0]
+            new_pad = self._normalize_types(scope).split("Scope (")[0]
             if pad == None or new_pad < pad:
                 pad = new_pad
-                obj = scope.replace("Method","Scope").replace("Device","Scope").split("Scope (")[1].split(")")[0].split(",")[0]
+                obj = self._normalize_types(scope).split("Scope (")[1].split(")")[0].split(",")[0]
                 path.append(obj)
                 if obj in ("_SB","_SB_","_PR","_PR_") or obj.startswith(("\\","_SB.","_SB_.","_PR.","_PR_.")): break # This is a full scope
         path = path[::-1]
