@@ -157,14 +157,19 @@ class SSDT:
             for x in ec_list:
                 device = x[0]
                 print(" --> {}".format(device))
+                if device.split(".")[-1] == "EC":
+                    if laptop:
+                        print(" ----> Named EC device located - no fake needed.")
+                        print("")
+                        self.u.grab("Press [enter] to return to main menu...")
+                        return
+                    print(" ----> EC called EC. Renaming")
+                    device = ".".join(device.split(".")[:-1]+["EC0"])
+                    rename = True
                 scope = "\n".join(self.d.get_scope(x[1],strip_comments=True))
                 # We need to check for _HID, _CRS, and _GPE
                 if all((y in scope for y in ["_HID","_CRS","_GPE"])):
                     print(" ----> Valid EC Device")
-                    if device.split(".")[-1] == "EC":
-                        print(" ----> EC called EC. Renaming")
-                        device = ".".join(device.split(".")[:-1]+["EC0"])
-                        rename = True
                     sta = self.d.get_method_paths(device+"._STA")
                     if len(sta):
                         print(" ----> Contains _STA method. Skipping")
