@@ -88,7 +88,7 @@ class SSDT:
         return plist_data
     
     def make_plist(self, oc_acpi, cl_acpi, patches):
-        if not len(patches): return # No patches to add - bail
+        # if not len(patches): return # No patches to add - bail
         repeat = False
         print("Building patches_OC and patches_Clover plists...")
         output = self.d.check_output(self.output)
@@ -145,8 +145,7 @@ class SSDT:
             return
         self.u.head("Fake EC")
         print("")
-        print("Locating PNP0C09 devices...")
-        # ec_list = self.d.get_devices("PNP0C09",strip_comments=True)
+        print("Locating PNP0C09 (EC) devices...")
         ec_list = self.d.get_device_paths_with_hid("PNP0C09")
         ec_to_patch  = []
         patches = []
@@ -158,7 +157,7 @@ class SSDT:
             for x in ec_list:
                 device = x[0]
                 print(" --> {}".format(device))
-                scope = "\n".join(self.d.get_scope(x[1]))
+                scope = "\n".join(self.d.get_scope(x[1],strip_comments=True))
                 # We need to check for _HID, _CRS, and _GPE
                 if all((y in scope for y in ["_HID","_CRS","_GPE"])):
                     print(" ----> Valid EC Device")
@@ -655,17 +654,259 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
         print("")
         self.u.grab("Press [enter] to return...")
 
+    def ssdt_pmc(self):
+        if not self.ensure_dsdt():
+            return
+        self.u.head("SSDT PMC")
+        print("")
+        print("Locating LPC(B)/SBRG...")
+        ec_list = self.d.get_device_paths_with_hid("PNP0C09")
+        lpc_name = None
+        if len(ec_list):
+            lpc_name = ".".join(ec_list[0][0].split(".")[:-1])
+        if lpc_name == None:
+            for x in ("LPCB", "LPC0", "LPC", "SBRG", "PX40"):
+                try:
+                    lpc_name = self.d.get_device_paths(x)[0][0]
+                    break
+                except: pass
+        if not lpc_name:
+            print(" - Could not locate LPC(B)! Aborting!")
+            print("")
+            self.u.grab("Press [enter] to return to main menu...")
+            return
+        print(" - Found {}".format(lpc_name))
+        oc = {"Comment":"PMCR for native 300-series NVRAM","Enabled":True,"Path":"SSDT-PMC.aml"}
+        self.make_plist(oc, "SSDT-PMC.aml", ())
+        print("Creating SSDT-PMC...")
+        ssdt = """//
+// SSDT-PMC source from Acidanthera
+// Original found here: https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/SSDT-PMC.dsl
+//
+// Uses the CORP name to denote where this was created for troubleshooting purposes.
+//
+DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
+{
+    External ([[LPCName]], DeviceObj)
+    Scope (_SB.PCI0.LPCB)
+    {
+        Device (PMCR)
+        {
+            Name (_HID, EisaId ("APP9876"))  // _HID: Hardware ID
+            Method (_STA, 0, NotSerialized)  // _STA: Status
+            {
+                If (_OSI ("Darwin"))
+                {
+                    Return (0x0B)
+                }
+                Else
+                {
+                    Return (Zero)
+                }
+            }
+            Name (_CRS, ResourceTemplate ()  // _CRS: Current Resource Settings
+            {
+                Memory32Fixed (ReadWrite,
+                    0xFE000000,         // Address Base
+                    0x00010000,         // Address Length
+                    )
+            })
+        }
+    }
+}""".replace("[[LPCName]]",lpc_name)
+        self.write_ssdt("SSDT-PMC",ssdt)
+        print("")
+        print("Done.")
+        print("")
+        self.u.grab("Press [enter] to return...")
+
+    def ssdt_awac(self):
+        if not self.ensure_dsdt():
+            return
+        self.u.head("SSDT AWAC")
+        print("")
+        print("Locating ACPI000E (AWAC) devices...")
+        awac_list = self.d.get_device_paths_with_hid("ACPI000E")
+        if not len(awac_list):
+            print(" - Could not locate any ACPI000E devices!  SSDT-AWAC not needed!")
+            print("")
+            self.u.grab("Press [enter] to return to main menu...")
+            return
+        awac = awac_list[0]
+        root = awac[0].split(".")[0]
+        print(" - Found {}".format(awac[0]))
+        print(" --> Verifying _STA...")
+        sta  = self.d.get_method_paths(awac[0]+"._STA")
+        xsta = self.d.get_method_paths(awac[0]+".XSTA")
+        has_stas = False
+        lpc_name = None
+        patches = []
+        if not len(sta) and len(xsta):
+            print(" --> _STA already renamed to XSTA!  Aborting!")
+            print("")
+            self.u.grab("Press [enter] to return to main menu...")
+            return
+        if len(sta):
+            scope = "\n".join(self.d.get_scope(sta[0][1],strip_comments=True))
+            if "STAS" in scope:
+                # We have an STAS var, and should be able to just leverage it
+                has_stas = True
+                print(" --> Has STAS variable")
+            else: print(" --> Does NOT have STAS variable")
+        else:
+            print(" --> No _STA method found")
+        # Let's find out of we need a unique patch for _STA -> XSTA
+        if len(sta) and not has_stas:
+            print(" --> Generating _STA to XSTA patch")
+            sta_index = self.d.find_next_hex(sta[0][1])[1]
+            print(" ----> Found at index {}".format(sta_index))
+            sta_hex  = "5F535441"
+            xsta_hex = "58535441"
+            padl,padr = self.d.get_shortest_unique_pad(sta_hex, sta_index)
+            patches.append({"Comment":"AWAC _STA to XSTA Rename","Find":padl+sta_hex+padr,"Replace":padl+xsta_hex+padr})
+        print("Locating PNP0B00 (RTC) devices...")
+        rtc_list  = self.d.get_device_paths_with_hid("PNP0B00")
+        rtc_fake = True
+        if len(rtc_list):
+            rtc_fake = False
+            print(" - Found at {}".format(rtc_list[0][0]))
+        else: print(" - None found - fake needed!")
+        if rtc_fake:
+            print("Locating LPC(B)/SBRG...")
+            ec_list = self.d.get_device_paths_with_hid("PNP0C09")
+            if len(ec_list):
+                lpc_name = ".".join(ec_list[0][0].split(".")[:-1])
+            if lpc_name == None:
+                for x in ("LPCB", "LPC0", "LPC", "SBRG", "PX40"):
+                    try:
+                        lpc_name = self.d.get_device_paths(x)[0][0]
+                        break
+                    except: pass
+            if not lpc_name:
+                print(" - Could not locate LPC(B)! Aborting!")
+                print("")
+                self.u.grab("Press [enter] to return to main menu...")
+                return
+        # At this point - we need to do the following:
+        # 1. Change STAS if needed
+        # 2. Setup _STA with _OSI and call XSTA if needed
+        # 3. Fake RTC if needed
+        oc = {"Comment":"Incompatible AWAC Fix","Enabled":True,"Path":"SSDT-AWAC.aml"}
+        self.make_plist(oc, "SSDT-AWAC.aml", patches)
+        print("Creating SSDT-AWAC...")
+        ssdt = """//
+// SSDT-AWAC source from Acidanthera
+// Originals found here:
+//  - https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/SSDT-AWAC.dsl
+//  - https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/SSDT-RTC0.dsl
+//
+// Uses the CORP name to denote where this was created for troubleshooting purposes.
+//
+DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
+{
+"""
+        if has_stas:
+            ssdt += """    External (STAS, IntObj)
+    Scope ([[Root]])
+    {
+        Method (_INI, 0, NotSerialized)  // _INI: Initialize
+        {
+            If (_OSI ("Darwin"))
+            {
+                STAS = One
+            }
+        }
+    }
+""".replace("[[Root]]",root)
+        elif len(sta):
+            # We have a renamed _STA -> XSTA method - let's leverage it
+            ssdt += """    External ([[AWACName]], DeviceObj)
+    External ([[AWACName]].XSTA, MethodObj)
+    Scope ([[AWACName]])
+    {
+        Name (ZSTA, 0x0F)
+        Method (_STA, 0, NotSerialized)  // _STA: Status
+        {
+            If (_OSI ("Darwin"))
+            {
+                Return (Zero)
+            }
+            // Default to 0x0F - but return the result of the renamed XSTA if possible
+            If ((CondRefOf ([[AWACName]].XSTA)))
+            {
+                Store ([[AWACName]].XSTA(), ZSTA)
+            }
+            Return (ZSTA)
+        }
+    }
+""".replace("[[AWACName]]",awac[0])
+        else:
+            # No STAS, and no _STA - let's just add one
+            ssdt += """    External ([[AWACName]], DeviceObj)
+    Scope ([[AWACName]])
+    {
+        Method (_STA, 0, NotSerialized)  // _STA: Status
+        {
+            If (_OSI ("Darwin"))
+            {
+                Return (Zero)
+            }
+            Else
+            {
+                Return (0x0F)
+            }
+        }
+    }
+""".replace("[[AWACName]]",awac[0])
+        if rtc_fake:
+            ssdt += """    External ([[LPCName]], DeviceObj)    // (from opcode)
+    Scope ([[LPCName]])
+    {
+        Device (RTC0)
+        {
+            Name (_HID, EisaId ("PNP0B00"))  // _HID: Hardware ID
+            Name (_CRS, ResourceTemplate ()  // _CRS: Current Resource Settings
+            {
+                IO (Decode16,
+                    0x0070,             // Range Minimum
+                    0x0070,             // Range Maximum
+                    0x01,               // Alignment
+                    0x08,               // Length
+                    )
+                IRQNoFlags ()
+                    {8}
+            })
+            Method (_STA, 0, NotSerialized)  // _STA: Status
+            {
+                If (_OSI ("Darwin")) {
+                    Return (0x0F)
+                } Else {
+                    Return (0);
+                }
+            }
+        }
+    }
+""".replace("[[LPCName]]",lpc_name)
+        ssdt += "}"
+        self.write_ssdt("SSDT-AWAC",ssdt)
+        print("")
+        print("Done.")
+        print("")
+        self.u.grab("Press [enter] to return...")
+
     def main(self):
         cwd = os.getcwd()
         self.u.head()
         print("")
         print("Current DSDT:  {}".format(self.dsdt))
         print("")
-        print("1. FixHPET    - Patch out IRQ Conflicts")
-        print("2. FakeEC     - OS-aware Fake EC")
-        print("3. PluginType - Sets plugin-type = 1 on CPU0/PR00")
+        print("1. FixHPET    - Patch Out IRQ Conflicts")
+        print("2. FakeEC     - OS-Aware Fake EC")
+        print("3. PluginType - Sets plugin-type = 1 on First ProcessorObj")
+        print("4. PMC        - Enables Native NVRAM on True 300-Series Boards")
+        print("5. AWAC       - Context-Aware AWAC Disable and RTC Fake")
         if sys.platform.startswith("linux") or sys.platform == "win32":
-            print("4. Dump DSDT  - Automatically dump the system DSDT")
+            print("6. Dump DSDT  - Automatically dump the system DSDT")
         print("")
         print("D. Select DSDT or origin folder")
         print("Q. Quit")
@@ -685,21 +926,19 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
         elif menu == "3":
             self.plugin_type()
         elif menu == "4":
-            if sys.platform.startswith("linux") or sys.platform == "win32":
-                self.dsdt = self.d.dump_dsdt(os.path.join(os.path.dirname(os.path.realpath(__file__)), self.output))
-            else:
-                return
-
+            self.ssdt_pmc()
+        elif menu == "5":
+            self.ssdt_awac()
+        elif menu == "6" and (sys.platform.startswith("linux") or sys.platform == "win32"):
+            self.dsdt = self.d.dump_dsdt(os.path.join(os.path.dirname(os.path.realpath(__file__)), self.output))
         return
 
 if __name__ == '__main__':
+    if 2/3 == 0: input = raw_input
     s = SSDT()
     while True:
         try:
             s.main()
         except Exception as e:
             print("An error occurred: {}".format(e))
-            if 2/3 == 0: # Python 2
-                raw_input("Press [enter] to continue...")
-            else:
-                input("Press [enter] to continue...")
+            input("Press [enter] to continue...")
