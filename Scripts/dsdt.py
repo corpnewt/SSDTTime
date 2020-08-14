@@ -32,9 +32,9 @@ class DSDT:
             else:
                 print("No DSDT.aml in folder.")
                 return False
-        elif os.path.basename(dsdt).lower() != "dsdt.aml":
-            print("Name is not DSDT.aml.")
-            return False
+        #elif os.path.basename(dsdt).lower() != "dsdt.aml":
+        #    print("Name is not DSDT.aml.")
+        #    return False
         temp = tempfile.mkdtemp()
         try:
             if got_origin:
@@ -281,29 +281,61 @@ class DSDT:
             index = start_index-i
         return (hex_text, index)
 
-    def get_unique_pad(self, current_hex, index, forward=True):
+    def get_shortest_unique_pad(self, current_hex, index, instance=0):
+        try:    left_pad  = self.get_unique_pad(current_hex, index, False, instance)
+        except: left_pad  = None
+        try:    right_pad = self.get_unique_pad(current_hex, index, True, instance)
+        except: right_pad = None
+        try:    mid_pad   = self.get_unique_pad(current_hex, index, None, instance)
+        except: mid_pad   = None
+        if left_pad == right_pad == mid_pad == None: raise Exception("No unique pad found!")
+        # We got at least one unique pad
+        min_pad = None
+        for x in (left_pad,right_pad,mid_pad):
+            if x == None: continue # Skip
+            if min_pad == None or len(x[0]+x[1]) < len(min_pad[0]+min_pad[1]):
+                min_pad = x
+        return min_pad
+
+    def get_unique_pad(self, current_hex, index, direction=None, instance=0):
         # Returns any pad needed to make the passed patch unique
+        # direction can be True = forward, False = backward, None = both
         start_index = index
         line,last_index = self.get_hex_starting_at(index)
         if not current_hex in line:
             raise Exception("{} not found in DSDT at index {}-{}!".format(current_hex,start_index,last_index))
-        pad = ""
-        line = current_hex.join(line.split(current_hex)[1:]) if forward else current_hex.join(line.split(current_hex)[:-1])
+        padl = padr = ""
+        parts = line.split(current_hex)
+        if instance >= len(parts)-1:
+            raise Exception("Instance out of range!")
+        linel = current_hex.join(parts[0:instance+1])
+        liner = current_hex.join(parts[instance+1:])
+        last_check = True # Default to forward
         while True:
             # Check if our hex string is unique
-            check_bytes = self.get_hex_bytes(current_hex+pad) if forward else self.get_hex_bytes(pad+current_hex)
-            if self.dsdt_raw.count(check_bytes) > 1:
-                # More than one instance - add more pad
-                if not len(line):
-                    # Need to grab more 
-                    line, start_index, last_index = self.find_next_hex(last_index) if forward else self.find_previous_hex(start_index)
-                    if last_index == -1:
-                        raise Exception("Hit end of file before unique hex was found!")
-                pad  = pad+line[0:2] if forward else line[-2:]+pad
-                line = line[2:] if forward else line[:-2]
+            check_bytes = self.get_hex_bytes(padl+current_hex+padr)
+            if self.dsdt_raw.count(check_bytes) == 1: # Got it!
+                break
+            if direction == True or (direction == None and len(padr)<=len(padl)):
+                # Let's check a forward byte
+                if not len(liner):
+                    # Need to grab more
+                    liner, _index, last_index = self.find_next_hex(last_index)
+                    if last_index == -1: raise Exception("Hit end of file before unique hex was found!")
+                padr  = padr+liner[0:2]
+                liner = liner[2:]
+                continue
+            if direction == False or (direction == None and len(padl)<=len(padr)):
+                # Let's check a backward byte
+                if not len(linel):
+                    # Need to grab more
+                    linel, start_index, _index = self.find_previous_hex(start_index)
+                    if _index == -1: raise Exception("Hit end of file before unique hex was found!")
+                padl  = linel[-2:]+padl
+                linel = linel[:-2]
                 continue
             break
-        return pad
+        return (padl,padr)
     
     def get_devices(self,search=None,types=("Device (","Scope ("),strip_comments=False):
         # Returns a list of tuples organized as (Device/Scope,d_s_index,matched_index)
@@ -417,7 +449,7 @@ class DSDT:
         # Walk the scope backwards, keeping track of changes
         pad = None
         path = []
-        obj_type = next((x for x in ("Processor","Method","Scope","Device","Name") if x in self.dsdt_scope[starting_index][0]),"Unknown Type")
+        obj_type = next((x for x in ("Processor","Method","Scope","Device","Name") if x+" (" in self.dsdt_scope[starting_index][0]),"Unknown Type")
         for scope,original_index in self.dsdt_scope[starting_index::-1]:
             new_pad = self._normalize_types(scope).split("Scope (")[0]
             if pad == None or new_pad < pad:
