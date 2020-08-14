@@ -161,14 +161,14 @@ class SSDT:
                 # We need to check for _HID, _CRS, and _GPE
                 if all((y in scope for y in ["_HID","_CRS","_GPE"])):
                     print(" ----> Valid EC Device")
-                    if device.split(".")[-1] == "EC":
-                        print(" ----> EC called EC. Renaming")
-                        device = ".".join(device.split(".")[:-1]+["EC0"])
-                        rename = True
                     sta = self.d.get_method_paths(device+"._STA")
                     if len(sta):
                         print(" ----> Contains _STA method. Skipping")
                         continue
+                    if device.split(".")[-1] == "EC":
+                        print(" ----> EC called EC. Renaming")
+                        device = ".".join(device.split(".")[:-1]+["EC0"])
+                        rename = True
                     ec_to_patch.append(device)
                 else:
                     print(" ----> NOT Valid EC Device")
