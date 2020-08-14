@@ -139,7 +139,7 @@ class SSDT:
         with open(os.path.join(output,"patches_Clover.plist"),"wb") as f:
             plist.dump(cl_plist,f)
 
-    def fake_ec(self):
+    def fake_ec(self, laptop = False):
         rename = False
         if not self.ensure_dsdt():
             return
@@ -161,15 +161,16 @@ class SSDT:
                 # We need to check for _HID, _CRS, and _GPE
                 if all((y in scope for y in ["_HID","_CRS","_GPE"])):
                     print(" ----> Valid EC Device")
-                    sta = self.d.get_method_paths(device+"._STA")
-                    if len(sta):
-                        print(" ----> Contains _STA method. Skipping")
-                        continue
                     if device.split(".")[-1] == "EC":
                         print(" ----> EC called EC. Renaming")
                         device = ".".join(device.split(".")[:-1]+["EC0"])
                         rename = True
-                    ec_to_patch.append(device)
+                    sta = self.d.get_method_paths(device+"._STA")
+                    if len(sta):
+                        print(" ----> Contains _STA method. Skipping")
+                        continue
+                    if not laptop:
+                        ec_to_patch.append(device)
                 else:
                     print(" ----> NOT Valid EC Device")
         else:
@@ -900,13 +901,14 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
         print("")
         print("Current DSDT:  {}".format(self.dsdt))
         print("")
-        print("1. FixHPET    - Patch Out IRQ Conflicts")
-        print("2. FakeEC     - OS-Aware Fake EC")
-        print("3. PluginType - Sets plugin-type = 1 on First ProcessorObj")
-        print("4. PMC        - Enables Native NVRAM on True 300-Series Boards")
-        print("5. AWAC       - Context-Aware AWAC Disable and RTC Fake")
+        print("1. FixHPET       - Patch Out IRQ Conflicts")
+        print("2. FakeEC        - OS-Aware Fake EC")
+        print("3. FakeEC Laptop - Only Builds Fake EC - Leaves Existing Untouched")
+        print("4. PluginType    - Sets plugin-type = 1 on First ProcessorObj")
+        print("5. PMC           - Enables Native NVRAM on True 300-Series Boards")
+        print("6. AWAC          - Context-Aware AWAC Disable and RTC Fake")
         if sys.platform.startswith("linux") or sys.platform == "win32":
-            print("6. Dump DSDT  - Automatically dump the system DSDT")
+            print("7. Dump DSDT  - Automatically dump the system DSDT")
         print("")
         print("D. Select DSDT or origin folder")
         print("Q. Quit")
@@ -924,12 +926,14 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
         elif menu == "2":
             self.fake_ec()
         elif menu == "3":
-            self.plugin_type()
+            self.fake_ec(True)
         elif menu == "4":
-            self.ssdt_pmc()
+            self.plugin_type()
         elif menu == "5":
+            self.ssdt_pmc()
+        elif menu == "6":
             self.ssdt_awac()
-        elif menu == "6" and (sys.platform.startswith("linux") or sys.platform == "win32"):
+        elif menu == "7" and (sys.platform.startswith("linux") or sys.platform == "win32"):
             self.dsdt = self.d.dump_dsdt(os.path.join(os.path.dirname(os.path.realpath(__file__)), self.output))
         return
 
