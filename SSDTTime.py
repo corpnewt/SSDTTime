@@ -19,15 +19,6 @@ class SSDT:
         self.legacy_irq = ["TMR","TIMR","IPIC","RTC"] # Could add HPET for extra patch-ness, but shouldn't be needed
         self.target_irqs = [0,8,11]
 
-    def find_substring(self, needle, haystack): # partial credits to aronasterling on Stack Overflow
-        index = haystack.find(needle)
-        if index == -1:
-            return False
-        L = index + len(needle)
-        if L < len(haystack) and haystack[L] in string.ascii_uppercase:
-            return False
-        return True
-
     def select_dsdt(self):
         self.u.head("Select DSDT")
         print(" ")
