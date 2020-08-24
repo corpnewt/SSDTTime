@@ -616,7 +616,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
         # Restore the original DSDT in memory
         self.d.dsdt_raw = saved_dsdt
         print("Locating HPET...")
-        hpet = self.d.get_device_paths("HPET")
+        hpet = self.d.get_device_paths_with_hid("PNP0103")
         if not hpet:
             print("HPET could not be located.")
             self.u.grab("Press [enter] to return to main menu...")
