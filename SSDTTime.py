@@ -262,46 +262,27 @@ DefinitionBlock ("", "SSDT", 2, "CORP ", "SsdtEC", 0x00001000)
         self.make_plist(oc, "SSDT-PLUG.aml", ())
         print("Creating SSDT-PLUG...")
         ssdt = """
+//
+// Leverages the PMPM approach found in https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/SSDT-PLUG.dsl
+//
 DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
 {
     External ([[CPUName]], ProcessorObj)
+    Method (PMPM, 4, NotSerialized) {
+       If (LEqual (Arg2, Zero)) {
+           Return (Buffer (One) { 0x03 })
+       }
+       Return (Package (0x02)
+       {
+           "plugin-type", 
+           One
+       })
+    }
     Scope ([[CPUName]])
     {
-        Method (DTGP, 5, NotSerialized)
-        {
-            If ((Arg0 == ToUUID ("a0b5b7c6-1318-441c-b0c9-fe695eaf949b")))
-            {
-                If ((Arg1 == One))
-                {
-                    If ((Arg2 == Zero))
-                    {
-                        Arg4 = Buffer (One)
-                            {
-                                 0x03                                             // .
-                            }
-                        Return (One)
-                    }
-                    If ((Arg2 == One))
-                    {
-                        Return (One)
-                    }
-                }
-            }
-            Arg4 = Buffer (One)
-                {
-                     0x00                                             // .
-                }
-            Return (Zero)
-        }
         Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
         {
-            Local0 = Package (0x02)
-                {
-                    "plugin-type", 
-                    One
-                }
-            DTGP (Arg0, Arg1, Arg2, Arg3, RefOf (Local0))
-            Return (Local0)
+            Return (PMPM (Arg0, Arg1, Arg2, Arg3))
         }
     }
 }""".replace("[[CPUName]]",cpu_name)
