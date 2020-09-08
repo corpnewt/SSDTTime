@@ -1,5 +1,5 @@
 from Scripts import *
-import getpass, os, tempfile, shutil, plistlib, sys, binascii, zipfile, re, string, time
+import getpass, os, tempfile, shutil, plistlib, sys, binascii, zipfile, re, string
 class SSDT:
     def __init__(self, **kwargs):
         self.dl   = downloader.Downloader()
