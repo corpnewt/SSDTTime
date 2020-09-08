@@ -1,5 +1,5 @@
 from Scripts import *
-import getpass, os, tempfile, shutil, plistlib, sys, binascii, zipfile, re, string
+import getpass, os, tempfile, shutil, plistlib, sys, binascii, zipfile, re, string, time
 class SSDT:
     def __init__(self, **kwargs):
         self.dl   = downloader.Downloader()
@@ -758,8 +758,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         ssdt = """//
 // SSDT-GPI0 source from Dortania
 // Originals found here:
-//  - https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/SSDT-AWAC.dsl
-//  - https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/SSDT-RTC0.dsl
+//  - https://github.com/dortania/Getting-Started-With-ACPI/blob/master/extra-files/decompiled/SSDT-GPI0.dsl
 //
 // Uses the CORP name to denote where this was created for troubleshooting purposes.
 //
