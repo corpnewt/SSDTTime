@@ -1,6 +1,5 @@
 from Scripts import *
-import getpass, os, tempfile, shutil, plistlib, sys, binascii, zipfile, re, string
-
+import getpass, os, tempfile, shutil, plistlib, sys, binascii, zipfile, re, string, time
 class SSDT:
     def __init__(self, **kwargs):
         self.dl   = downloader.Downloader()
@@ -698,6 +697,108 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         print("")
         self.u.grab("Press [enter] to return...")
 
+    def ssdt_gpi0(self):
+        if not self.ensure_dsdt():
+            return
+        self.u.head("SSDT GPI0")
+        print("")
+        print("Locating GPI0 devices...")
+        gpi0_list = self.d.get_device_paths("GPI0")
+        if not len(gpi0_list):
+            print(" - Could not locate any GPI0 devices!  SSDT-GPI0 not needed!")
+            print("")
+            self.u.grab("Press [enter] to return to main menu...")
+            return
+        gpi0 = gpi0_list[0]
+        root = gpi0[0].split(".")[0]
+        print(" - Found {}".format(gpi0[0]))
+        print(" --> Verifying _STA...")
+        sta  = self.d.get_method_paths(gpi0[0]+"._STA")
+        xsta = self.d.get_method_paths(gpi0[0]+".XSTA")
+        has_stas = False
+        patches = []
+        gpi0_vars = {}
+        gpi0_vars_patched = {}
+        if not len(sta) and len(xsta):
+            print(" --> _STA already renamed to XSTA!  Aborting!")
+            return
+
+        if len(sta):
+            scope = "\n".join(self.d.get_scope(sta[0][1],strip_comments=True))
+            variables_regex = "LEqual.\((....)"
+            variables = re.findall(variables_regex, scope)
+            values_regex = "LEqual.\(......(...+?(?=\)))"
+            values = re.findall(values_regex, scope)
+            for var in variables:
+                for value in values:
+                    gpi0_vars[f"{var}"] = value
+            if scope:
+                has_stas = True
+                print(" --> Has _STA variable")
+                print("")
+            else: 
+                print(" --> Does NOT have _STA variable")
+                print("")
+                self.u.grab("Press [enter] to return to main menu...")
+        else:
+            print(" --> No _STA method found")
+        # Let's find out of we need a unique patch for _STA -> XSTA
+        if len(sta) and not has_stas:
+            print(" --> Generating _STA to XSTA patch")
+            sta_index = self.d.find_next_hex(sta[0][1])[1]
+            print(" ----> Found at index {}".format(sta_index))
+            sta_hex  = "5F535441"
+            xsta_hex = "58535441"
+            padl,padr = self.d.get_shortest_unique_pad(sta_hex, sta_index)
+            patches.append({"Comment":"GPI0 _STA to XSTA Rename","Find":padl+sta_hex+padr,"Replace":padl+xsta_hex+padr})
+        
+        oc = {"Comment":"GPI0 Fix","Enabled":True,"Path":"SSDT-GPI0.aml"}
+        self.make_plist(oc, "SSDT-GPI0.aml", patches)
+        print("Creating SSDT-GPI0...")
+        ssdt = """//
+// SSDT-GPI0 source from Dortania
+// Originals found here:
+//  - https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/SSDT-AWAC.dsl
+//  - https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/SSDT-RTC0.dsl
+//
+// Uses the CORP name to denote where this was created for troubleshooting purposes.
+//
+DefinitionBlock ("", "SSDT", 2, "CORP", "GPI0", 0x00000000)
+{
+"""
+        if has_stas:
+            for key, value in gpi0_vars.items():
+                if gpi0_vars[f"{key}"] == "One":
+                    gpi0_vars_patched[f"{key}"] = "Zero"
+                elif gpi0_vars[f"{key}"].startswith("0x"):
+                    gpi0_vars_patched[f"{key}"] = "Zero"
+
+                ssdt += """    External ([[var]], IntObj)\n""".replace("[[var]]", key)
+
+
+            ssdt += """
+    Scope ([[Root]])
+    {
+        Method (_INI, 0, NotSerialized)  // _INI: Initialize
+        {
+            If (_OSI ("Darwin"))
+            { """.replace("[[Root]]", root)
+            for key, value in gpi0_vars.items():
+
+                ssdt += """
+                [[key]] = [[value]]""".replace("[[key]]", key).replace("[[value]]", value)
+
+        ssdt += """\n            }
+        }
+    }\n"""        
+        ssdt += "}"
+        self.write_ssdt("SSDT-GPI0", ssdt)
+        print("")
+        print("Done.")
+        print("")
+        self.u.grab("Press [enter] to return...")
+        
+
     def ssdt_awac(self):
         if not self.ensure_dsdt():
             return
@@ -714,7 +815,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         root = awac[0].split(".")[0]
         print(" - Found {}".format(awac[0]))
         print(" --> Verifying _STA...")
-        sta  = self.d.get_method_paths(awac[0]+"._STA")
+        sta = self.d.get_method_paths(awac[0]+"._STA")
         xsta = self.d.get_method_paths(awac[0]+".XSTA")
         has_stas = False
         lpc_name = None
@@ -725,12 +826,13 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
             self.u.grab("Press [enter] to return to main menu...")
             return
         if len(sta):
-            scope = "\n".join(self.d.get_scope(sta[0][1],strip_comments=True))
+            scope = "\n".join(self.d.get_scope(sta[0][1], strip_comments=True))
             if "STAS" in scope:
                 # We have an STAS var, and should be able to just leverage it
                 has_stas = True
                 print(" --> Has STAS variable")
-            else: print(" --> Does NOT have STAS variable")
+            else:
+                print(" --> Does NOT have STAS variable")
         else:
             print(" --> No _STA method found")
         # Let's find out of we need a unique patch for _STA -> XSTA
@@ -738,17 +840,19 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
             print(" --> Generating _STA to XSTA patch")
             sta_index = self.d.find_next_hex(sta[0][1])[1]
             print(" ----> Found at index {}".format(sta_index))
-            sta_hex  = "5F535441"
+            sta_hex = "5F535441"
             xsta_hex = "58535441"
-            padl,padr = self.d.get_shortest_unique_pad(sta_hex, sta_index)
-            patches.append({"Comment":"AWAC _STA to XSTA Rename","Find":padl+sta_hex+padr,"Replace":padl+xsta_hex+padr})
+            padl, padr = self.d.get_shortest_unique_pad(sta_hex, sta_index)
+            patches.append({"Comment": "AWAC _STA to XSTA Rename",
+                            "Find": padl+sta_hex+padr, "Replace": padl+xsta_hex+padr})
         print("Locating PNP0B00 (RTC) devices...")
-        rtc_list  = self.d.get_device_paths_with_hid("PNP0B00")
+        rtc_list = self.d.get_device_paths_with_hid("PNP0B00")
         rtc_fake = True
         if len(rtc_list):
             rtc_fake = False
             print(" - Found at {}".format(rtc_list[0][0]))
-        else: print(" - None found - fake needed!")
+        else:
+            print(" - None found - fake needed!")
         if rtc_fake:
             print("Locating LPC(B)/SBRG...")
             ec_list = self.d.get_device_paths_with_hid("PNP0C09")
@@ -759,7 +863,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
                     try:
                         lpc_name = self.d.get_device_paths(x)[0][0]
                         break
-                    except: pass
+                    except:
+                        pass
             if not lpc_name:
                 print(" - Could not locate LPC(B)! Aborting!")
                 print("")
@@ -769,7 +874,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         # 1. Change STAS if needed
         # 2. Setup _STA with _OSI and call XSTA if needed
         # 3. Fake RTC if needed
-        oc = {"Comment":"Incompatible AWAC Fix","Enabled":True,"Path":"SSDT-AWAC.aml"}
+        oc = {"Comment": "Incompatible AWAC Fix",
+              "Enabled": True, "Path": "SSDT-AWAC.aml"}
         self.make_plist(oc, "SSDT-AWAC.aml", patches)
         print("Creating SSDT-AWAC...")
         ssdt = """//
@@ -795,7 +901,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
             }
         }
     }
-""".replace("[[Root]]",root)
+""".replace("[[Root]]", root)
         elif len(sta):
             # We have a renamed _STA -> XSTA method - let's leverage it
             ssdt += """    External ([[AWACName]], DeviceObj)
@@ -817,7 +923,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
             Return (ZSTA)
         }
     }
-""".replace("[[AWACName]]",awac[0])
+""".replace("[[AWACName]]", awac[0])
         else:
             # No STAS, and no _STA - let's just add one
             ssdt += """    External ([[AWACName]], DeviceObj)
@@ -835,7 +941,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
             }
         }
     }
-""".replace("[[AWACName]]",awac[0])
+""".replace("[[AWACName]]", awac[0])
         if rtc_fake:
             ssdt += """    External ([[LPCName]], DeviceObj)    // (from opcode)
     Scope ([[LPCName]])
@@ -864,9 +970,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
             }
         }
     }
-""".replace("[[LPCName]]",lpc_name)
+""".replace("[[LPCName]]", lpc_name)
         ssdt += "}"
-        self.write_ssdt("SSDT-AWAC",ssdt)
+        self.write_ssdt("SSDT-AWAC", ssdt)
         print("")
         print("Done.")
         print("")
@@ -884,6 +990,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
         print("4. PluginType    - Sets plugin-type = 1 on First ProcessorObj")
         print("5. PMC           - Enables Native NVRAM on True 300-Series Boards")
         print("6. AWAC          - Context-Aware AWAC Disable and RTC Fake")
+        print("7. GPI0          - Enables GPI0 _STA")
         if sys.platform.startswith("linux") or sys.platform == "win32":
             print("7. Dump DSDT  - Automatically dump the system DSDT")
         print("")
@@ -910,7 +1017,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
             self.ssdt_pmc()
         elif menu == "6":
             self.ssdt_awac()
-        elif menu == "7" and (sys.platform.startswith("linux") or sys.platform == "win32"):
+        elif menu == "7":
+            self.ssdt_gpi0()
+        elif menu == "8" and (sys.platform.startswith("linux") or sys.platform == "win32"):
             self.dsdt = self.d.dump_dsdt(os.path.join(os.path.dirname(os.path.realpath(__file__)), self.output))
         return
 
