@@ -771,9 +771,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "GPI0", 0x00000000)
                     gpi0_vars_patched[f"{key}"] = "Zero"
                 elif gpi0_vars[f"{key}"].startswith("0x"):
                     gpi0_vars_patched[f"{key}"] = "Zero"
-
+                elif gpi0_vars[f"{key}"] == "Zero":
+                    gpi0_vars_patched[f"{key}"] = "One"
                 ssdt += """    External ([[var]], IntObj)\n""".replace("[[var]]", key)
-
 
             ssdt += """
     Scope ([[Root]])
@@ -782,7 +782,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "GPI0", 0x00000000)
         {
             If (_OSI ("Darwin"))
             { """.replace("[[Root]]", root)
-            for key, value in gpi0_vars.items():
+            for key, value in gpi0_vars_patched.items():
 
                 ssdt += """
                 [[key]] = [[value]]""".replace("[[key]]", key).replace("[[value]]", value)
