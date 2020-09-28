@@ -667,7 +667,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
 DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
 {
     External ([[LPCName]], DeviceObj)
-    Scope (_SB.PCI0.LPCB)
+    Scope ([[LPCName]])
     {
         Device (PMCR)
         {
