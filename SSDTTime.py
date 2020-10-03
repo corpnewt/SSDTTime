@@ -17,6 +17,7 @@ class SSDT:
         self.output = "Results"
         self.legacy_irq = ["TMR","TIMR","IPIC","RTC"] # Could add HPET for extra patch-ness, but shouldn't be needed
         self.target_irqs = [0,8,11]
+        self.illegal_names = ("XHC1","EHC1","EHC2","PXSX")
 
     def select_dsdt(self):
         self.u.head("Select DSDT")
@@ -447,13 +448,13 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
             for x in irqs:
                 print(" - {}: {}".format(x.rjust(4," "),self.get_all_irqs(irqs[x])))
             print("")
-            print("C. Only Conflicitng IRQs from Legacy Devices ({} from IPIC/TMR/RTC)".format(",".join([str(x) for x in self.target_irqs]) if len(self.target_irqs) else "None"))
+            print("C. Only Conflicting IRQs from Legacy Devices ({} from IPIC/TMR/RTC)".format(",".join([str(x) for x in self.target_irqs]) if len(self.target_irqs) else "None"))
             print("O. Only Conflicting IRQs ({})".format(",".join([str(x) for x in self.target_irqs]) if len(self.target_irqs) else "None"))
             print("L. Legacy IRQs (from IPIC, TMR/TIMR, and RTC)")
             print("")
             print("You can also type your own list of Devices and IRQs.")
             print("The format is DEV1:IRQ1,IRQ2 DEV2:IRQ3,IRQ4")
-            print("You can omit the IRQ# to remove all from that devic (DEV1: DEV2:1,2,3)")
+            print("You can omit the IRQ# to remove all from that device (DEV1: DEV2:1,2,3)")
             print("For example, to remove IRQ 0 from RTC, all from IPIC, and 8 and 11 from TMR:\n")
             print("RTC:0 IPIC: TMR:8,11")
             if pad < 24:
@@ -665,7 +666,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
 DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
 {
     External ([[LPCName]], DeviceObj)
-    Scope (_SB.PCI0.LPCB)
+    Scope ([[LPCName]])
     {
         Device (PMCR)
         {
@@ -907,7 +908,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
     External ([[AWACName]].XSTA, MethodObj)
     Scope ([[AWACName]])
     {
-        Name (ZSTA, 0x0F)
+        Name (ZSTA, 0x0F). 
         Method (_STA, 0, NotSerialized)  // _STA: Status
         {
             If (_OSI ("Darwin"))
@@ -977,6 +978,144 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
         print("")
         self.u.grab("Press [enter] to return...")
 
+    def get_unique_device(self, path, base_name, starting_number=0):
+        # Appends a hex number until a unique device is found
+        while True:
+            hex_num = hex(starting_number).replace("0x","").upper()
+            name = base_name[:-1*len(hex_num)]+hex_num
+            if not len(self.d.get_device_paths("."+name)):
+                return (name,starting_number)
+            starting_number += 1
+
+    def ssdt_rhub(self):
+        if not self.ensure_dsdt():
+            return
+        self.u.head("USB Reset")
+        print("")
+        print("Gathering RHUB/HUBN/URTH devices...")
+        rhubs = self.d.get_device_paths("RHUB")
+        rhubs.extend(self.d.get_device_paths("HUBN"))
+        rhubs.extend(self.d.get_device_paths("URTH"))
+        if not len(rhubs):
+            print(" - None found!  Aborting...")
+            print("")
+            self.u.grab("Press [enter] to return to main menu...")
+            return
+        print(" - Found {:,}".format(len(rhubs)))
+        # Gather some info
+        patches = []
+        tasks = []
+        xhc_num = 2
+        ehc_num = 1
+        for x in rhubs:
+            task = {"device":x[0]}
+            print(" --> {}".format(".".join(x[0].split(".")[:-1])))
+            name = x[0].split(".")[-2]
+            if name in self.illegal_names:
+                print(" ----> Needs rename!")
+                # Get the new name, and the path to the device and its parent
+                task["device"] = ".".join(task["device"].split(".")[:-1])
+                task["parent"] = ".".join(task["device"].split(".")[:-1])
+                if name in ("XHCI","PXSX"):
+                    task["rename"],xhc_num = self.get_unique_device(task["parent"],"XHCI",xhc_num)
+                    xhc_num += 1 # Increment the name number
+                else:
+                    task["rename"],ehc_num = self.get_unique_device(task["parent"],"EH01",ehc_num)
+                    ehc_num += 1 # Increment the name number
+            sta_method = self.d.get_method_paths(task["device"]+"._STA")
+            # Let's find out of we need a unique patch for _STA -> XSTA
+            if len(sta_method):
+                print(" ----> Generating _STA to XSTA patch")
+                sta_index = self.d.find_next_hex(sta_method[0][1])[1]
+                print(" ------> Found at index {}".format(sta_index))
+                sta_hex  = "5F535441"
+                xsta_hex = "58535441"
+                padl,padr = self.d.get_shortest_unique_pad(sta_hex, sta_index)
+                patches.append({"Comment":"{} _STA to XSTA Rename".format(task["device"].split(".")[-1]),"Find":padl+sta_hex+padr,"Replace":padl+xsta_hex+padr})
+            # Let's try to get the _ADR
+            scope_adr = self.d.get_name_paths(task["device"]+"._ADR")
+            task["address"] = self.d.dsdt_lines[scope_adr[0][1]].strip() if len(scope_adr) else "Name (_ADR, Zero)  // _ADR: Address"
+            tasks.append(task)
+        oc = {"Comment":"SSDT to disable USB RHUB/HUBN/URTH and rename devices","Enabled":True,"Path":"SSDT-USB-Reset.aml"}
+        self.make_plist(oc, "SSDT-USB-Reset.aml", patches)
+        ssdt = """//
+// SSDT to disable RHUB/HUBN/URTH devices and rename PXSX, XHC1, EHC1, and EHC2 devices
+//
+DefinitionBlock ("", "SSDT", 2, "CORP", "UsbReset", 0x00001000)
+{
+"""
+        # Iterate the USB controllers and add external references
+        # Gather the parents first - ensure they're unique, and put them in order
+        parents = sorted(list(set([x["parent"] for x in tasks if x.get("parent",None)])))
+        for x in parents:
+            ssdt += "    External ({}, DeviceObj)\n".format(x)
+        for x in tasks:
+            ssdt += "    External ({}, DeviceObj)\n".format(x["device"])
+        # Let's walk them again and disable RHUBs and rename
+        for x in tasks:
+            if x.get("rename",None):
+                # Disable the old controller
+                ssdt += """
+    Scope ([[device]])
+    {
+        Method (_STA, 0, NotSerialized)  // _STA: Status
+        {
+            If (_OSI ("Darwin"))
+            {
+                Return (Zero)
+            }
+            Else
+            {
+                Return (0x0F)
+            }
+        }
+    }
+
+    Scope ([[parent]])
+    {
+        Device ([[new_device]])
+        {
+            [[address]]
+            Method (_STA, 0, NotSerialized)  // _STA: Status
+            {
+                If (_OSI ("Darwin"))
+                {
+                    Return (0x0F)
+                }
+                Else
+                {
+                    Return (Zero)
+                }
+            }
+        }
+    }
+""".replace("[[device]]",x["device"]).replace("[[parent]]",x["parent"]).replace("[[address]]",x.get("address","Name (_ADR, Zero)  // _ADR: Address")).replace("[[new_device]]",x["rename"])
+            else:
+                # Only disabling the RHUB
+                ssdt += """
+    Scope ([[device]])
+    {
+        Method (_STA, 0, NotSerialized)  // _STA: Status
+        {
+            If (_OSI ("Darwin"))
+            {
+                Return (Zero)
+            }
+            Else
+            {
+                Return (0x0F)
+            }
+        }
+    }
+    """.replace("[[device]]",x["device"])
+        ssdt += "\n}"
+        self.write_ssdt("SSDT-USB-Reset",ssdt)
+        print("")
+        print("Done.")
+        print("")
+        self.u.grab("Press [enter] to return...")
+        return
+
     def main(self):
         cwd = os.getcwd()
         self.u.head()
@@ -989,9 +1128,11 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
         print("4. PluginType    - Sets plugin-type = 1 on First ProcessorObj")
         print("5. PMC           - Enables Native NVRAM on True 300-Series Boards")
         print("6. AWAC          - Context-Aware AWAC Disable and RTC Fake")
-        print("7. GPI0          - Enables GPI0 _STA")
+        print("7. USB Reset     - Reset USB controllers to allow hardware mapping")
+        print("8. GPI0          - Enables GPI0 _STA to enable trackpad with VoodooI2C")
+
         if sys.platform.startswith("linux") or sys.platform == "win32":
-            print("7. Dump DSDT  - Automatically dump the system DSDT")
+            print("9. Dump DSDT     - Automatically dump the system DSDT")
         print("")
         print("D. Select DSDT or origin folder")
         print("Q. Quit")
@@ -1017,8 +1158,10 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
         elif menu == "6":
             self.ssdt_awac()
         elif menu == "7":
+            self.ssdt_rhub()
+        elif menu == "8":
             self.ssdt_gpi0()
-        elif menu == "8" and (sys.platform.startswith("linux") or sys.platform == "win32"):
+        elif menu == "9" and (sys.platform.startswith("linux") or sys.platform == "win32"):
             self.dsdt = self.d.dump_dsdt(os.path.join(os.path.dirname(os.path.realpath(__file__)), self.output))
         return
 
