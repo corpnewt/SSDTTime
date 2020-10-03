@@ -908,7 +908,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
     External ([[AWACName]].XSTA, MethodObj)
     Scope ([[AWACName]])
     {
-        Name (ZSTA, 0x0F). 
+        Name (ZSTA, 0x0F)
         Method (_STA, 0, NotSerialized)  // _STA: Status
         {
             If (_OSI ("Darwin"))
