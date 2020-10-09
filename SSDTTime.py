@@ -281,9 +281,11 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
     }
     Scope ([[CPUName]])
     {
-        Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
-        {
-            Return (PMPM (Arg0, Arg1, Arg2, Arg3))
+        If (_OSI ("Darwin")) {
+            Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+            {
+                Return (PMPM (Arg0, Arg1, Arg2, Arg3))
+            }
         }
     }
 }""".replace("[[CPUName]]",cpu_name)
