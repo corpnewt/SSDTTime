@@ -875,12 +875,12 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
         print("")
         self.u.grab("Press [enter] to return...")
 
-    def get_unique_device(self, path, base_name, starting_number=0):
+    def get_unique_device(self, path, base_name, starting_number=0, used_names = []):
         # Appends a hex number until a unique device is found
         while True:
             hex_num = hex(starting_number).replace("0x","").upper()
             name = base_name[:-1*len(hex_num)]+hex_num
-            if not len(self.d.get_device_paths("."+name)):
+            if not len(self.d.get_device_paths("."+name)) and not name in used_names:
                 return (name,starting_number)
             starting_number += 1
 
@@ -902,23 +902,27 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
         # Gather some info
         patches = []
         tasks = []
+        used_names = []
         xhc_num = 2
         ehc_num = 1
         for x in rhubs:
             task = {"device":x[0]}
             print(" --> {}".format(".".join(x[0].split(".")[:-1])))
             name = x[0].split(".")[-2]
-            if name in self.illegal_names:
+            if name in self.illegal_names or name in used_names:
                 print(" ----> Needs rename!")
                 # Get the new name, and the path to the device and its parent
                 task["device"] = ".".join(task["device"].split(".")[:-1])
                 task["parent"] = ".".join(task["device"].split(".")[:-1])
-                if name in ("XHCI","PXSX"):
-                    task["rename"],xhc_num = self.get_unique_device(task["parent"],"XHCI",xhc_num)
+                if name.startswith(("XHC","PXSX")):
+                    task["rename"],xhc_num = self.get_unique_device(task["parent"],"XHCI",xhc_num,used_names)
                     xhc_num += 1 # Increment the name number
                 else:
-                    task["rename"],ehc_num = self.get_unique_device(task["parent"],"EH01",ehc_num)
+                    task["rename"],ehc_num = self.get_unique_device(task["parent"],"EH01",ehc_num,used_names)
                     ehc_num += 1 # Increment the name number
+                used_names.append(task["rename"])
+            else:
+                used_names.append(name)
             sta_method = self.d.get_method_paths(task["device"]+"._STA")
             # Let's find out of we need a unique patch for _STA -> XSTA
             if len(sta_method):
