@@ -914,12 +914,12 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
                 # Get the new name, and the path to the device and its parent
                 task["device"] = ".".join(task["device"].split(".")[:-1])
                 task["parent"] = ".".join(task["device"].split(".")[:-1])
-                if name.startswith(("XHC","PXSX")):
-                    task["rename"],xhc_num = self.get_unique_device(task["parent"],"XHCI",xhc_num,used_names)
-                    xhc_num += 1 # Increment the name number
-                else:
+                if name.startswith("EHC"):
                     task["rename"],ehc_num = self.get_unique_device(task["parent"],"EH01",ehc_num,used_names)
                     ehc_num += 1 # Increment the name number
+                else:
+                    task["rename"],xhc_num = self.get_unique_device(task["parent"],"XHCI",xhc_num,used_names)
+                    xhc_num += 1 # Increment the name number
                 used_names.append(task["rename"])
             else:
                 used_names.append(name)
