@@ -1,4 +1,4 @@
-from Scripts import *
+from Scripts import downloader, utils, run, reveal, dsdt, plist
 import getpass, os, tempfile, shutil, plistlib, sys, binascii, zipfile, re, string
 
 class SSDT:
