@@ -425,6 +425,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
     def get_oc_patch(self, patch):
         zero = self.get_data(self.d.get_hex_bytes("00000000"))
         return {
+            "Base": "",
+            "BaseSkip": 0,
             "Comment": patch["Comment"],
             "Count": 0,
             "Enabled": patch.get("Enabled",True),
