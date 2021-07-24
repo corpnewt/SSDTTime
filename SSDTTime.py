@@ -506,10 +506,17 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
         print("Locating HPET's _CRS Method...")
         devices = self.d.get_devices("Method (_CRS")
         hpet = self.d.get_method_paths("HPET._CRS")
-        hpatch = self.d.get_method_paths("HPET.XCRS")
-        if not len(hpet):
+        if not hpet:
+            # Didn't find a _CRS Method - check for Name
+            hpet = self.d.get_name_paths("HPET._CRS")
+        if not hpet:
             print(" - Could not locate HPET's _CRS! Aborting!")
-            if len(hpatch):
+            # Check for XCRS to see if the rename is already applied
+            hpatch = self.d.get_method_paths("HPET.XCRS")
+            if not hpatch:
+                # Didn't find XCRS Method - check for Name
+                hpatch = self.d.get_name_paths("HPET.XCRS")
+            if hpatch:
                 print(" --> Appears to already be named XCRS!")
             print("")
             self.u.grab("Press [enter] to return to main menu...")
