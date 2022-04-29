@@ -6,9 +6,10 @@ class DSDT:
         self.dl = downloader.Downloader()
         self.r  = run.Run()
         self.u    = utils.Utils("SSDT Time")
-        self.iasl_url_macOS = "https://bitbucket.org/RehabMan/acpica/downloads/iasl.zip"
+        self.iasl_url_macOS = "https://raw.githubusercontent.com/acidanthera/MaciASL/master/Dist/iasl-stable"
         self.iasl_url_linux = "http://amdosx.catra.club/iasl.zip"
         self.iasl_url_windows = "https://acpica.org/sites/acpica/files/iasl-win-20200528.zip"
+        self.acpi_binary_tools = "https://www.acpica.org/downloads/binary-tools"
         self.iasl = self.check_iasl()
         if not self.iasl:
             raise Exception("Could not locate or download iasl!")
@@ -79,57 +80,72 @@ class DSDT:
         os.chdir(cwd)
         shutil.rmtree(temp,ignore_errors=True)
         return ret
-    
-    def check_iasl(self):
-        if sys.platform == "win32":
-            target = os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl.exe")
-        else:
-            target = os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl")
-        if not os.path.exists(target):
-            # Need to download
-            temp = tempfile.mkdtemp()
-            try:
-                if sys.platform == "darwin":
-                    self._download_and_extract(temp,self.iasl_url_macOS)
-                elif sys.platform.startswith("linux"):
-                    self._download_and_extract(temp,self.iasl_url_linux)
-                elif sys.platform == "win32":
-                    self._download_and_extract(temp,self.iasl_url_windows)
-                else: 
-                    raise Exception  
-            except Exception as e:
-                print("An error occurred :(\n - {}".format(e))
-            shutil.rmtree(temp, ignore_errors=True)
-        if os.path.exists(target):
-            return target
+
+    def get_latest_iasl(self):
+        # Helper to scrape https://www.acpica.org/downloads/binary-tools for the latest
+        # iasl zip
+        try:
+            source = self.dl.get_string(self.acpi_binary_tools)
+            url = source.lower().split("\">iasl compiler and windows acpi tools")[0].split("<a href=\"")[-1]
+            return url
+        except: pass
         return None
+    
+    def check_iasl(self,try_downloading=True):
+        if sys.platform == "win32":
+            targets = (os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl.exe"),)
+        else:
+            targets = (
+                os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl-dev"),
+                os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl-stable"),
+                os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl-legacy"),
+                os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl")
+            )
+        target = next((t for t in targets if os.path.exists(t)),None)
+        if target or not try_downloading:
+            # Either found it - or we didn't, and have already tried downloading
+            return target
+        # Need to download
+        temp = tempfile.mkdtemp()
+        try:
+            if sys.platform == "darwin":
+                self._download_and_extract(temp,self.iasl_url_macOS)
+            elif sys.platform.startswith("linux"):
+                self._download_and_extract(temp,self.iasl_url_linux)
+            elif sys.platform == "win32":
+                iasl_url_windows = self.get_latest_iasl()
+                if not iasl_url_windows: raise Exception("Could not get latest iasl for Windows")
+                self._download_and_extract(temp,iasl_url_windows)
+            else: 
+                raise Exception("Unknown OS")
+        except Exception as e:
+            print("An error occurred :(\n - {}".format(e))
+        shutil.rmtree(temp, ignore_errors=True)
+        # Check again after downloading
+        return self.check_iasl(try_downloading=False)
 
     def _download_and_extract(self, temp, url):
         ztemp = tempfile.mkdtemp(dir=temp)
         zfile = os.path.basename(url)
         print("Downloading {}".format(os.path.basename(url)))
         self.dl.stream_to_file(url, os.path.join(ztemp,zfile), False)
-        print(" - Extracting")
-        btemp = tempfile.mkdtemp(dir=temp)
-        # Extract with built-in tools \o/
-        with zipfile.ZipFile(os.path.join(ztemp,zfile)) as z:
-            z.extractall(os.path.join(temp,btemp))
+        search_dir = ztemp
+        if zfile.lower().endswith(".zip"):
+            print(" - Extracting")
+            search_dir = tempfile.mkdtemp(dir=temp)
+            # Extract with built-in tools \o/
+            with zipfile.ZipFile(os.path.join(ztemp,zfile)) as z:
+                z.extractall(search_dir)
         script_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)))
-        for x in os.listdir(os.path.join(temp,btemp)):
-            if "iasl" in x.lower():
+        for x in os.listdir(search_dir):
+            if x.lower().startswith(("iasl","acpidump")):
                 # Found one
                 print(" - Found {}".format(x))
                 if sys.platform != "win32":
                     print("   - Chmod +x")
-                    self.r.run({"args":["chmod","+x",os.path.join(btemp,x)]})
+                    self.r.run({"args":["chmod","+x",os.path.join(search_dir,x)]})
                 print("   - Copying to {} directory".format(os.path.basename(script_dir)))
-                shutil.copy(os.path.join(btemp,x), os.path.join(script_dir,x))
-            if "acpidump" in x.lower():
-                if sys.platform == "win32":
-                    # Found one
-                    print(" - Found {}".format(x))
-                    print("   - Copying to {} directory".format(os.path.basename(script_dir)))
-                    shutil.copy(os.path.join(btemp,x), os.path.join(script_dir,x))
+                shutil.copy(os.path.join(search_dir,x), os.path.join(script_dir,x))
 
     def dump_dsdt(self, output):
         self.u.head("Dumping DSDT")
@@ -194,7 +210,6 @@ class DSDT:
             print("Unsupported platform for DSDT dumping.")
             self.u.grab("Press [enter] to return to main menu...")
             return 
-
 
     def check_output(self, output):
         t_folder = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), output)
