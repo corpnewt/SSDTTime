@@ -51,10 +51,7 @@ class SSDT:
         res = self.d.check_output(self.output)
         dsl_path = os.path.join(res,ssdt_name+".dsl")
         aml_path = os.path.join(res,ssdt_name+".aml")
-        if sys.platform == "win32":
-            iasl_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), self.scripts, "iasl.exe")
-        else:
-            iasl_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), self.scripts, "iasl")
+        iasl_path = self.d.iasl
         with open(dsl_path,"w") as f:
             f.write(ssdt)
         print("Compiling...")
