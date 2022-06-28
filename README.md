@@ -6,10 +6,18 @@ Supports macOS, Linux and Windows
 ## Supported SSDTs:
 - SSDT-EC
     - OS-aware fake EC
+- SSDT-EC-Laptop
+    - Only Builds Fake EC - Leaves Existing Untouched
+- SSDT-PMC
+    - Enables Native NVRAM on True 300-Series Boards
+- SSDT-AWAC
+    - Context-Aware AWAC Disable and RTC Fake
 - SSDT-PLUG
     - Sets plugin-type = 1 on CPU0/PR00
 - SSDT-HPET
     - Patches out IRQ conflicts
+- SSDT-USB_Reset
+    -  Reset USB controllers to allow hardware mapping
     
 Additionally on Linux and Windows the tool can be used to dump the system DSDT.
 
