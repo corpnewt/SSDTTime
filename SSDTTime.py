@@ -12,6 +12,9 @@ class SSDT:
         except Exception as e:
             print("Something went wrong :( - Aborting!\n - {}".format(e))
             exit(1)
+        if os.name == "nt":
+            self.w = 120
+            self.h = 30
         self.iasl = None
         self.dsdt = None
         self.scripts = "Scripts"
@@ -19,6 +22,30 @@ class SSDT:
         self.legacy_irq = ["TMR","TIMR","IPIC","RTC"] # Could add HPET for extra patch-ness, but shouldn't be needed
         self.target_irqs = [0,8,11]
         self.illegal_names = ("XHC1","EHC1","EHC2","PXSX")
+        self.osi_strings = {
+            "Windows 2000": "Windows 2000",
+            "Windows XP": "Windows 2001",
+            "Windows XP SP1": "Windows 2001 SP1",
+            "Windows Server 2003": "Windows 2001.1",
+            "Windows XP SP2": "Windows 2001 SP2",
+            "Windows Server 2003 SP1": "Windows 2001.1 SP1",
+            "Windows Vista": "Windows 2006",
+            "Windows Vista SP1": "Windows 2006 SP1",
+            "Windows Server 2008": "Windows 2006.1",
+            "Windows 7, Win Server 2008 R2": "Windows 2009",
+            "Windows 8, Win Server 2012": "Windows 2012",
+            "Windows 8.1": "Windows 2013",
+            "Windows 10": "Windows 2015",
+            "Windows 10, version 1607": "Windows 2016",
+            "Windows 10, version 1703": "Windows 2017",
+            "Windows 10, version 1709": "Windows 2017.2",
+            "Windows 10, version 1803": "Windows 2018",
+            "Windows 10, version 1809": "Windows 2018.2",
+            "Windows 10, version 1903": "Windows 2019",
+            "Windows 10, version 2004": "Windows 2020",
+            "Windows 11": "Windows 2021",
+            "Windows 11, version 22H2": "Windows 2022"
+        }
 
     def select_dsdt(self):
         self.u.head("Select DSDT")
@@ -76,7 +103,7 @@ class SSDT:
             last = last[path]
         return plist_data
     
-    def make_plist(self, oc_acpi, cl_acpi, patches):
+    def make_plist(self, oc_acpi, cl_acpi, patches, replace=False):
         # if not len(patches): return # No patches to add - bail
         repeat = False
         print("Building patches_OC and patches_Clover plists...")
@@ -101,27 +128,35 @@ class SSDT:
         cl_plist = self.ensure_path(cl_plist,("ACPI","DSDT","Patches"))
 
         # Add the .aml references
-        if any(oc_acpi["Comment"] == x["Comment"] for x in oc_plist["ACPI"]["Add"]):
+        if replace: # Remove any conflicting entries
+            oc_plist["ACPI"]["Add"] = [x for x in oc_plist["ACPI"]["Add"] if oc_acpi["Path"] != x["Path"]]
+            cl_plist["ACPI"]["SortedOrder"] = [x for x in cl_plist["ACPI"]["SortedOrder"] if cl_acpi != x]
+        if any(oc_acpi["Path"] == x["Path"] for x in oc_plist["ACPI"]["Add"]):
             print(" -> Add \"{}\" already in OC plist!".format(oc_acpi["Comment"]))
         else:
             oc_plist["ACPI"]["Add"].append(oc_acpi)
-        if any(cl_acpi == x for x in cl_plist["ACPI"]["SortedOrder"]):
+        if cl_acpi in cl_plist["ACPI"]["SortedOrder"]:
             print(" -> \"{}\" already in Clover plist!".format(cl_acpi))
         else:
             cl_plist["ACPI"]["SortedOrder"].append(cl_acpi)
 
         # Iterate the patches
         for p in patches:
-            if any(x["Comment"] == p["Comment"] for x in oc_plist["ACPI"]["Patch"]):
+            ocp = self.get_oc_patch(p)
+            cp  = self.get_clover_patch(p)
+            if replace: # Remove any conflicting entries
+                oc_plist["ACPI"]["Patch"] = [x for x in oc_plist["ACPI"]["Patch"] if ocp["Find"] != x["Find"] and ocp["Replace"] != x["Replace"]]
+                cl_plist["ACPI"]["DSDT"]["Patches"] = [x for x in cl_plist["ACPI"]["DSDT"]["Patches"] if cp["Find"] != x["Find"] and cp["Replace"] != x["Replace"]]
+            if any(x["Find"] == ocp["Find"] and x["Replace"] == ocp["Replace"] for x in oc_plist["ACPI"]["Patch"]):
                 print(" -> Patch \"{}\" already in OC plist!".format(p["Comment"]))
             else:
                 print(" -> Adding Patch \"{}\" to OC plist!".format(p["Comment"]))
-                oc_plist["ACPI"]["Patch"].append(self.get_oc_patch(p))
-            if any(x["Comment"] == p["Comment"] for x in cl_plist["ACPI"]["DSDT"]["Patches"]):
+                oc_plist["ACPI"]["Patch"].append(ocp)
+            if any(x["Find"] == cp["Find"] and x["Replace"] == cp["Replace"] for x in cl_plist["ACPI"]["DSDT"]["Patches"]):
                 print(" -> Patch \"{}\" already in Clover plist!".format(p["Comment"]))
             else:
                 print(" -> Adding Patch \"{}\" to Clover plist!".format(p["Comment"]))
-                cl_plist["ACPI"]["DSDT"]["Patches"].append(self.get_clover_patch(p))         
+                cl_plist["ACPI"]["DSDT"]["Patches"].append(cp)         
         # Write the plists
         with open(os.path.join(output,"patches_OC.plist"),"wb") as f:
             plist.dump(oc_plist,f)
@@ -460,9 +495,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
             print("You can omit the IRQ# to remove all from that device (DEV1: DEV2:1,2,3)")
             print("For example, to remove IRQ 0 from RTC, all from IPIC, and 8 and 11 from TMR:\n")
             print("RTC:0 IPIC: TMR:8,11")
-            if pad < 24:
-                pad = 24
-            self.u.resize(80, pad)
+            self.u.resize(self.w, max(pad,self.h))
             menu = self.u.grab("Please select an option (default is C):  ")
             if not len(menu):
                 menu = "c"
@@ -492,7 +525,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
                     d[name.upper()] = val
                 if d == None:
                     continue
-            self.u.resize(80,24)
+            self.u.resize(self.w,self.h)
             return d
 
     def fix_hpet(self):
@@ -1024,7 +1057,129 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "UsbReset", 0x00001000)
         self.u.grab("Press [enter] to return...")
         return
 
+    def ssdt_usbx(self):
+        self.u.head("USBX Device")
+        print("")
+        print("Creating generic SSDT-USBX...")
+        oc = {"Comment":"Generic USBX device for USB power properties","Enabled":True,"Path":"SSDT-USBX.aml"}
+        self.make_plist(oc, "SSDT-USBX.aml", [])
+        ssdt = """// Generic USBX Device with power properties injected
+// Edited from:
+// https://github.com/dortania/OpenCore-Post-Install/blob/master/extra-files/SSDT-USBX.aml
+DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
+{
+    Scope (\_SB)
+    {
+        Device (USBX)
+        {
+            Name (_ADR, Zero)  // _ADR: Address
+            Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+            {
+                If (LEqual (Arg2, Zero)) { Return (Buffer () { 0x03 }) }
+                Return (Package ()
+                {
+                    "kUSBSleepPowerSupply", 
+                    0x13EC, 
+                    "kUSBSleepPortCurrentLimit", 
+                    0x0834, 
+                    "kUSBWakePowerSupply", 
+                    0x13EC, 
+                    "kUSBWakePortCurrentLimit", 
+                    0x0834
+                })
+            }
+            Method (_STA, 0, NotSerialized)  // _STA: Status
+            {
+                If (_OSI ("Darwin")) { Return (0x0F) }
+                Else { Return (Zero) }
+            }
+        }
+    }
+}"""
+        self.write_ssdt("SSDT-USBX",ssdt)
+        print("")
+        print("Done.")
+        print("")
+        self.u.grab("Press [enter] to return...")
+        return
+
+    def ssdt_xosi(self):
+        if not self.ensure_dsdt():
+            return
+        while True:
+            lines = [""]
+            pad = len(str(len(self.osi_strings)))
+            for i,x in enumerate(self.osi_strings,start=1):
+                lines.append("{}. {} ({})".format(str(i).rjust(pad),x,self.osi_strings[x]))
+            lines.append("")
+            lines.append("M. Main")
+            lines.append("Q. Quit")
+            lines.append("")
+            self.u.resize(self.w, max(len(lines)+4,self.h))
+            self.u.head("XOSI")
+            print("\n".join(lines))
+            menu = self.u.grab("Please select the latest Windows version for SSDT-XOSI:  ")
+            if menu.lower() == "m": return
+            if menu.lower() == "q": self.u.custom_quit()
+            # Make sure we got a number - and it's within our range
+            try:
+                target_string = list(self.osi_strings)[int(menu)-1]
+            except:
+                continue
+            # Got a valid option - break out and create the SSDT
+            break
+        self.u.resize(self.w,self.h)
+        self.u.head("XOSI")
+        print("")
+        print("Creating SSDT-XOSI with support through {}...".format(target_string))
+        ssdt = """DefinitionBlock ("", "SSDT", 2, "DRTNIA", "XOSI", 0x00001000)
+{
+    Method (XOSI, 1, NotSerialized)
+    {
+        // Edited from:
+        // https://github.com/dortania/Getting-Started-With-ACPI/blob/master/extra-files/decompiled/SSDT-XOSI.dsl
+        // Based off of: 
+        // https://docs.microsoft.com/en-us/windows-hardware/drivers/acpi/winacpi-osi#_osi-strings-for-windows-operating-systems
+        // Add OSes from the below list as needed, most only check up to Windows 2015
+        // but check what your DSDT looks for
+        Local0 = Package ()
+            {
+"""
+        # Iterate our OS versions, and stop once we've added the last supported
+        for i,x in enumerate(self.osi_strings,start=1):
+            osi_string = self.osi_strings[x]
+            ssdt += "                \"{}\"".format(osi_string)
+            if x == target_string or i==len(self.osi_strings): # Last one - bail
+                ssdt += " // "+x
+                break
+            ssdt += ", // "+x+"\n" # Add a comma and newline for the next value
+        ssdt +="""\n            }
+        If (_OSI ("Darwin")) { Return ((Ones != Match (Local0, MEQ, Arg0, MTR, Zero, Zero))) }
+        Else { Return (_OSI (Arg0)) }
+    }
+}"""
+        patches = []
+        print("Checking for OSID Method...")
+        osid = self.d.get_method_paths("OSID")
+        if osid:
+            print(" - Located {} Method at offset {}".format(osid[0][0],osid[0][1]))
+            print(" - Creating OSID to XSID rename...")
+            patches.append({"Comment":"OSID to XSID rename - must come before _OSI to XOSI rename!","Find":"4F534944","Replace":"58534944"})
+        else:
+            print(" - Not found, no OSID to XSID rename needed")
+        print("Creating _OSI to XOSI rename...")
+        patches.append({"Comment":"_OSI to XOSI rename - requires SSDT-XOSI.aml","Find":"5F4F5349","Replace":"584F5349"})
+        self.write_ssdt("SSDT-XOSI",ssdt)
+        oc = {"Comment":"_OSI override to return true through {} - requires _OSI to XOSI rename".format(target_string),"Enabled":True,"Path":"SSDT-XOSI.aml"}
+        self.make_plist(oc, "SSDT-XOSI.aml", patches, replace=True)
+        print("")
+        print("Done.")
+        print("")
+        self.u.grab("Press [enter] to return...")
+        return
+
     def main(self):
+        self.u.resize(self.w,self.h)
         cwd = os.getcwd()
         self.u.head()
         print("")
@@ -1037,9 +1192,11 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "UsbReset", 0x00001000)
         print("5. PMC           - Enables Native NVRAM on True 300-Series Boards")
         print("6. AWAC          - Context-Aware AWAC Disable and RTC Fake")
         print("7. USB Reset     - Reset USB controllers to allow hardware mapping")
-        if sys.platform.startswith("linux") or sys.platform == "win32":
-            print("8. Dump DSDT     - Automatically dump the system DSDT")
+        print("8. USBX          - Power properties for USB on SKL and newer SMBIOS")
+        print("9. XOSI          - _OSI rename and patch to return true for a range of Windows verions")
         print("")
+        if sys.platform.startswith("linux") or sys.platform == "win32":
+            print("P. Dump DSDT     - Automatically dump the system DSDT")
         print("D. Select DSDT or origin folder")
         print("Q. Quit")
         print("")
@@ -1065,7 +1222,11 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "UsbReset", 0x00001000)
             self.ssdt_awac()
         elif menu == "7":
             self.ssdt_rhub()
-        elif menu == "8" and (sys.platform.startswith("linux") or sys.platform == "win32"):
+        elif menu == "8":
+            self.ssdt_usbx()
+        elif menu == "9":
+            self.ssdt_xosi()
+        elif menu.lower() == "p" and (sys.platform.startswith("linux") or sys.platform == "win32"):
             self.dsdt = self.d.dump_dsdt(os.path.join(os.path.dirname(os.path.realpath(__file__)), self.output))
         return
 
