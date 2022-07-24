@@ -12,6 +12,8 @@ class SSDT:
         except Exception as e:
             print("Something went wrong :( - Aborting!\n - {}".format(e))
             exit(1)
+        self.w = 80
+        self.h = 24
         if os.name == "nt":
             self.w = 120
             self.h = 30
