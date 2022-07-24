@@ -165,6 +165,11 @@ class SSDT:
         with open(os.path.join(output,"patches_Clover.plist"),"wb") as f:
             plist.dump(cl_plist,f)
 
+    def patch_warn(self):
+        # Warn users to ensure they merge the patches_XX.plist contents with their config.plist
+        print("\n!!WARNING!!  Make sure you merge the contents of patches_[OC/Clover].plist")
+        print("             with your config.plist!\n")
+
     def fake_ec(self, laptop = False):
         rename = False
         if not self.ensure_dsdt():
@@ -275,7 +280,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP ", "SsdtEC", 0x00001000)
         self.write_ssdt("SSDT-EC",ssdt)
         print("")
         print("Done.")
-        print("")
+        self.patch_warn()
         self.u.grab("Press [enter] to return...")
 
     def plugin_type(self):
@@ -327,7 +332,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
         self.write_ssdt("SSDT-PLUG",ssdt)
         print("")
         print("Done.")
-        print("")
+        self.patch_warn()
         self.u.grab("Press [enter] to return...")
 
     def list_irqs(self):
@@ -674,7 +679,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
         self.write_ssdt("SSDT-HPET",ssdt)
         print("")
         print("Done.")
-        print("")
+        self.patch_warn()
         self.u.grab("Press [enter] to return...")
 
     def ssdt_pmc(self):
@@ -740,7 +745,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         self.write_ssdt("SSDT-PMC",ssdt)
         print("")
         print("Done.")
-        print("")
+        self.patch_warn()
         self.u.grab("Press [enter] to return...")
 
     def ssdt_awac(self):
@@ -914,7 +919,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
         self.write_ssdt("SSDT-AWAC",ssdt)
         print("")
         print("Done.")
-        print("")
+        self.patch_warn()
         self.u.grab("Press [enter] to return...")
 
     def get_unique_device(self, path, base_name, starting_number=0, used_names = []):
@@ -1055,7 +1060,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "UsbReset", 0x00001000)
         self.write_ssdt("SSDT-USB-Reset",ssdt)
         print("")
         print("Done.")
-        print("")
+        self.patch_warn()
         self.u.grab("Press [enter] to return...")
         return
 
@@ -1101,7 +1106,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         self.write_ssdt("SSDT-USBX",ssdt)
         print("")
         print("Done.")
-        print("")
+        self.patch_warn()
         self.u.grab("Press [enter] to return...")
         return
 
@@ -1176,7 +1181,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         self.make_plist(oc, "SSDT-XOSI.aml", patches, replace=True)
         print("")
         print("Done.")
-        print("")
+        self.patch_warn()
         self.u.grab("Press [enter] to return...")
         return
 
