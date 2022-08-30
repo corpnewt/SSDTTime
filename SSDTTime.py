@@ -1368,6 +1368,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
             else:
                 ssdt += pc*i + "Device ({})\n".format(bridge[0])
             ssdt += pc*i + "{\n"
+            if i-1==len(bridges):
+                ssdt += pc*(i+1) + "// Target Device Path:\n"
+                ssdt += pc*(i+1) + "// {}\n".format(test_path)
             ssdt += pc*(i+1) + "Name (_ADR, {})\n".format(bridge[1])
             ssdt_end = pc*i + "}\n" + ssdt_end
         ssdt += ssdt_end
