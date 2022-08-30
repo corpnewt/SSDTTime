@@ -1185,6 +1185,201 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         self.u.grab("Press [enter] to return...")
         return
 
+    def get_address_from_line(self, line):
+        try:
+            return int(self.d.dsdt_lines[line].split("_ADR, ")[1].split(")")[0].replace("Zero","0x0").replace("One","0x1"),16)
+        except:
+            return None
+
+    def hexy(self,integer):
+        return "0x"+hex(integer)[2:].upper()
+
+    def get_bridge_devices(self, path):
+        # Takes a Pci(x,x)/Pci(x,x) style path, and returns named bridges and addresses
+        adrs = re.split(r"#|\/",path.lower().replace("pciroot(","").replace("pci(","").replace(")",""))
+        # Walk the addresses and create our bridge objects
+        bridges = []
+        for bridge in adrs:
+            if not len(bridge): continue # Skip empty entries
+            if not "," in bridge: return # Uh... we don't want to bridge the PciRoot - something's wrong.
+            try:
+                adr1,adr2 = [int(x,16) for x in bridge.split(",")]
+                # Join the addresses as a 32-bit int
+                adr_int = (adr1 << 16) + adr2
+                adr = {0:"Zero",1:"One"}.get(adr_int,"0x"+hex(adr_int).upper()[2:].rjust(8 if adr1 > 0 else 0,"0"))
+                brg_num = str(hex(len(bridges))[2:].upper())
+                name = "BRG0"[:-len(brg_num)]+brg_num
+                bridges.append((name,adr))
+            except:
+                return [] # Failed :(
+        return bridges
+
+    def sanitize_device_path(self, device_path):
+        # Walk the device_path, gather the addresses, and rebuild it
+        if not device_path.lower().startswith("pciroot("):
+            # Not a device path - bail
+            return
+        # Strip out PciRoot() and Pci() - then split by separators
+        adrs = re.split(r"#|\/",device_path.lower().replace("pciroot(","").replace("pci(","").replace(")",""))
+        new_path = []
+        for i,adr in enumerate(adrs):
+            if i == 0:
+                # Check for roots
+                if "," in adr: return # Broken
+                try: new_path.append("PciRoot({})".format(self.hexy(int(adr,16))))
+                except: return # Broken again :(
+            else:
+                if "," in adr: # Not Windows formatted
+                    try: adr1,adr2 = [int(x,16) for x in adr.split(",")]
+                    except: return # REEEEEEEEEE
+                else:
+                    try:
+                        adr = int(adr,16)
+                        adr2,adr1 = adr & 0xFF, adr >> 8 & 0xFF
+                    except: return # AAAUUUGGGHHHHHHHH
+                # Should have adr1 and adr2 - let's add them
+                new_path.append("Pci({},{})".format(self.hexy(adr1),self.hexy(adr2)))
+        return "/".join(new_path)
+
+    def get_longest_match(self, device_dict, match_path):
+        longest = 0
+        matched = None
+        exact   = False
+        for device in device_dict:
+            if match_path.lower().startswith(device_dict[device].lower()) and len(device_dict[device])>longest:
+                # Got a longer match - set it
+                matched = device
+                longest = len(device_dict[device])
+                # Check if it's an exact match, and bail early
+                if device_dict[device].lower() == match_path.lower():
+                    exact = True
+                    break
+        return (matched,device_dict[matched],exact,longest)
+
+    def get_device_path(self):
+        while True:
+            self.u.head("Input Device Path")
+            print("")
+            print("A valid device path will have one of the following formats:")
+            print("")
+            print("macOS:   PciRoot(0x0)/Pci(0x0,0x0)/Pci(0x0,0x0)")
+            print("Windows: PCIROOT(0)#PCI(0000)#PCI(0000)")
+            print("")
+            print("M. Main")
+            print("Q. Quit")
+            print(" ")
+            path = self.u.grab("Please enter the device path needing bridges:  ")
+            if path.lower() == "m":
+                return
+            if path.lower() == "q":
+                self.u.custom_quit()
+            path = self.sanitize_device_path(path)
+            if not path: continue
+            return path
+
+    def pci_bridge(self):
+        if not self.ensure_dsdt(): return
+        test_path = self.get_device_path()
+        if not test_path: return
+        self.u.head("Building Bridges")
+        print("")
+        print("Gathering ACPI devices...")
+        # Let's gather our roots - and any other paths that and in _ADR
+        pci_roots = self.d.get_device_paths_with_hid(hid="PNP0A08")
+        paths = self.d.get_path_of_type(obj_type="Name",obj="_ADR")
+        # Let's create our dictionary device paths - starting with the roots
+        print("Generating device paths...")
+        device_dict = {}
+        for path in pci_roots:
+            device_adr = self.d.get_name_paths(obj=path[0]+"._ADR")
+            if device_adr and len(device_adr)==1:
+                adr = self.get_address_from_line(device_adr[0][1])
+                device_dict[path[0]] = "PciRoot({})".format(self.hexy(adr))
+        # First - let's create a new list of tuples with the ._ADR stripped
+        # The goal here is to ensure pathing is listed in the proper order.
+        sanitized_paths = sorted([(x[0][0:-5],x[1],x[2]) for x in paths])
+        for path in sanitized_paths:
+            adr = self.get_address_from_line(path[1])
+            # Let's bitshift to get both addresses
+            try:
+                adr2,adr1 = adr & 0xFFFF, adr >> 16 & 0xFFFF
+            except:
+                continue # Bad address?
+            # Let's check if our path already exists
+            if path[0] in device_dict: continue # Skip
+            # Doesn't exist - let's see if the parent path does?
+            parent = ".".join(path[0].split(".")[:-1])
+            if not parent in device_dict: continue # No parent either - bail...
+            # Our parent path exists - let's copy its device_path, and append our addressing
+            device_path = device_dict[parent]
+            if not device_path: continue # Bail - no device_path set
+            device_path += "/Pci({},{})".format(self.hexy(adr1),self.hexy(adr2))
+            device_dict[path[0]] = device_path
+        print("Matching against {}".format(test_path))
+        match = self.get_longest_match(device_dict,test_path)
+        if not match:
+            print(" - No matches found!")
+            print("")
+            self.u.grab("Press [enter] to return...")
+            return
+        if match[2]:
+            print(" - No bridge needed!")
+            print("")
+            self.u.grab("Press [enter] to return...")
+            return
+        # We got a match - and need bridges
+        print("Matched {} - {}".format(match[0],match[1]))
+        remain = test_path[match[-1]+1:]
+        print("Generating bridge{} for {}...".format(
+            "" if not remain.count("/") else "s",
+            remain
+        ))
+        bridges = self.get_bridge_devices(remain)
+        if not bridges:
+            print(" - Something went wrong!")
+            print("")
+            self.u.grab("Press [enter] to return...")
+            return
+        print("Generating SSDT...")
+
+        ssdt = """// Source and info from:
+// https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/Source/SSDT-BRG0.dsl
+DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
+{
+    /*
+     * Start copying here if you're adding this info to an existing SSDT-Bridge!
+     */
+    External ([[scope]], DeviceObj)
+    Scope ([[scope]])
+    {
+""".replace("[[scope]]",match[0])
+        ssdt_end = """    }
+    /*
+     * End copying here if you're adding this info to an existing SSDT-Bridge!
+     */
+}
+"""
+        # Let's iterate our bridges
+        pc = "    " # Pad char
+        for i,bridge in enumerate(bridges,start=2):
+            if i-1==len(bridges):
+                ssdt += pc*i + "// Customize this device name if needed, eg. GFX0\n"
+                ssdt += pc*i + "Device (PXSX)\n"
+            else:
+                ssdt += pc*i + "Device ({})\n".format(bridge[0])
+            ssdt += pc*i + "{\n"
+            ssdt += pc*(i+1) + "Name (_ADR, {})\n".format(bridge[1])
+            ssdt_end = pc*i + "}\n" + ssdt_end
+        ssdt += ssdt_end
+        self.write_ssdt("SSDT-Bridge",ssdt)
+        oc = {"Comment":"Defines missing PCI bridges for property injection","Enabled":True,"Path":"SSDT-Bridge.aml"}
+        self.make_plist(oc, "SSDT-Bridge.aml", ())
+        print("")
+        print("Done.")
+        self.patch_warn()
+        self.u.grab("Press [enter] to return...")
+        return
+
     def main(self):
         self.u.resize(self.w,self.h)
         cwd = os.getcwd()
@@ -1195,13 +1390,14 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         print("1. FixHPET       - Patch Out IRQ Conflicts")
         print("2. FakeEC        - OS-Aware Fake EC")
         print("3. FakeEC Laptop - Only Builds Fake EC - Leaves Existing Untouched")
-        print("4. PluginType    - Sets plugin-type = 1 on First ProcessorObj")
-        print("5. PMC           - Enables Native NVRAM on True 300-Series Boards")
-        print("6. AWAC          - Context-Aware AWAC Disable and RTC Fake")
-        print("7. USB Reset     - Reset USB controllers to allow hardware mapping")
-        print("8. USBX          - Power properties for USB on SKL and newer SMBIOS")
-        print("9. XOSI          - _OSI rename and patch to return true for a range of Windows")
-        print("                   verions")
+        print("4. USBX          - Power properties for USB on SKL and newer SMBIOS")
+        print("5. PluginType    - Sets plugin-type = 1 on First ProcessorObj")
+        print("6. PMC           - Enables Native NVRAM on True 300-Series Boards")
+        print("7. AWAC          - Context-Aware AWAC Disable and RTC Fake")
+        print("8. USB Reset     - Reset USB controllers to allow hardware mapping")
+        print("9. PCI Bridge    - Create missing PCI bridges for passed device path")
+        print("0. XOSI          - _OSI rename and patch to return true for a range of Windows")
+        print("                   verions - also checks for OSID")
         print("")
         if sys.platform.startswith("linux") or sys.platform == "win32":
             print("P. Dump DSDT     - Automatically dump the system DSDT")
@@ -1223,16 +1419,18 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         elif menu == "3":
             self.fake_ec(True)
         elif menu == "4":
-            self.plugin_type()
-        elif menu == "5":
-            self.ssdt_pmc()
-        elif menu == "6":
-            self.ssdt_awac()
-        elif menu == "7":
-            self.ssdt_rhub()
-        elif menu == "8":
             self.ssdt_usbx()
+        elif menu == "5":
+            self.plugin_type()
+        elif menu == "6":
+            self.ssdt_pmc()
+        elif menu == "7":
+            self.ssdt_awac()
+        elif menu == "8":
+            self.ssdt_rhub()
         elif menu == "9":
+            self.pci_bridge()
+        elif menu == "0":
             self.ssdt_xosi()
         elif menu.lower() == "p" and (sys.platform.startswith("linux") or sys.platform == "win32"):
             self.dsdt = self.d.dump_dsdt(os.path.join(os.path.dirname(os.path.realpath(__file__)), self.output))
