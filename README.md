@@ -4,22 +4,24 @@ A simple tool designed to make creating SSDTs simple.
 Supports macOS, Linux and Windows
 
 ## Supported SSDTs:
-- SSDT-EC
-    - OS-aware fake EC (laptop and desktop variants)
-- SSDT-PLUG
-    - Sets plugin-type = 1 on CPU0/PR00
 - SSDT-HPET
     - Patches out IRQ conflicts
+- SSDT-EC
+    - OS-aware fake EC (laptop and desktop variants)
+- SSDT-USBX
+    - Provides generic USB power properties
+- SSDT-PLUG
+    - Sets plugin-type = 1 on CPU0/PR00
 - SSDT-PMC
     - Adds missing PMCR device for native 300-series NVRAM
 - SSDT-AWAC
     - Disables AWAC clock, and enables (or fakes) RTC as needed
 - SSDT-USB-Reset
     - Returns a zero status for detected root hubs to allow hardware querying
-- SSDT-USBX
-    - Provides generic USB power properties
+- SSDT-Bridge
+    - Create missing PCI bridges for passed device path
 - SSDT-XOSI
-    - _OSI rename and patch to return true for a range of Windows versions
+    - _OSI rename and patch to return true for a range of Windows versions - also checks for OSID
     
 Additionally on Linux and Windows the tool can be used to dump the system DSDT.
 
