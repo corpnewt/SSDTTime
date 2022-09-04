@@ -1400,7 +1400,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         print("8. USB Reset     - Reset USB controllers to allow hardware mapping")
         print("9. PCI Bridge    - Create missing PCI bridges for passed device path")
         print("0. XOSI          - _OSI rename and patch to return true for a range of Windows")
-        print("                   verions - also checks for OSID")
+        print("                   versions - also checks for OSID")
         print("")
         if sys.platform.startswith("linux") or sys.platform == "win32":
             print("P. Dump DSDT     - Automatically dump the system DSDT")
