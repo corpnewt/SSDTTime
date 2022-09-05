@@ -20,6 +20,8 @@ Supports macOS, Linux and Windows
     - Returns a zero status for detected root hubs to allow hardware querying
 - SSDT-Bridge
     - Create missing PCI bridges for passed device path
+- SSDT-PNLF
+    - Sets up a PNLF device for laptop backlight control
 - SSDT-XOSI
     - _OSI rename and patch to return true for a range of Windows versions - also checks for OSID
     
