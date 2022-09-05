@@ -134,7 +134,7 @@ class SSDT:
             oc_plist["ACPI"]["Add"] = [x for x in oc_plist["ACPI"]["Add"] if oc_acpi["Path"] != x["Path"]]
             cl_plist["ACPI"]["SortedOrder"] = [x for x in cl_plist["ACPI"]["SortedOrder"] if cl_acpi != x]
         if any(oc_acpi["Path"] == x["Path"] for x in oc_plist["ACPI"]["Add"]):
-            print(" -> Add \"{}\" already in OC plist!".format(oc_acpi["Comment"]))
+            print(" -> Add \"{}\" already in OC plist!".format(oc_acpi["Path"]))
         else:
             oc_plist["ACPI"]["Add"].append(oc_acpi)
         if cl_acpi in cl_plist["ACPI"]["SortedOrder"]:
@@ -1383,6 +1383,130 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         self.u.grab("Press [enter] to return...")
         return
 
+    def ssdt_pnlf(self):
+        if not self.ensure_dsdt(): return
+        self.u.head("Generating PNLF")
+        print("")
+        print("Gathering ACPI devices...")
+        # Let's our device _ADR entries, and find the iGPU - which
+        # is *always* at 0x00020000 on Intel machines.
+        # Some do not have them defined in the DSDT though - so we'll
+        # also search for common names (GFX0, IGPU, VID, VID0, VID1)
+        # under the PCI roots as well.
+        igpu = None
+        guessed = False
+        paths = self.d.get_path_of_type(obj_type="Name",obj="_ADR")
+        print("Looking for iGPU device at 0x00020000...")
+        for path in paths:
+            adr = self.get_address_from_line(path[1])
+            if adr == 0x00020000:
+                igpu = path[0][:-5]
+                print(" - Found at {}".format(igpu))
+                break
+        if not igpu: # Try matching by name
+            print(" - Not found!")
+            print("Searching common iGPU names...")
+            pci_roots = self.d.get_device_paths_with_hid(hid="PNP0A08")
+            external = []
+            for line in self.d.dsdt_lines:
+                if not line.strip().startswith("External ("): continue # We don't need it
+                try:
+                    path = line.split("(")[1].split(", ")[0]
+                    # Prepend the backslash and ensure trailing underscores are stripped.
+                    path = "\\"+".".join([x.rstrip("_").replace("\\","") for x in path.split(".")])
+                    external.append(path)
+                except: pass
+            for root in pci_roots:
+                for name in ("IGPU","_VID","VID0","VID1","GFX0","VGA","_VGA"):
+                    test_path = "{}.{}".format(root[0],name)
+                    device = self.d.get_device_paths(test_path)
+                    if device: device = device[0][0] # Unpack to the path
+                    else:
+                        # Walk the external paths and see if it's declared elsewhere?
+                        # We're not patching anything directly - just getting a pathing
+                        # reference, so it's fine to not have the surrounding code.
+                        device = next((x for x in external if test_path == x),None)
+                    if not device: continue # Not found :(
+                    # Got a device - see if it has an _ADR, and skip if so - as it was wrong in the prior loop
+                    if self.d.get_path_of_type(obj_type="Name",obj=device+"._ADR"): continue
+                    # At this point - we got a hit
+                    igpu = device
+                    print(" - Found likely iGPU device at {}".format(igpu))
+        if not igpu:
+            guessed = True
+            print(" - Could not locate an iGPU device!")
+            igpu = (pci_roots[0][0] if pci_roots else "\\_SB.PCI0")+".GFX0"
+            print(" - Falling back on {}".format(igpu))
+        # Now we need to get our _UID
+        while True:
+            self.u.head("Select _UID for PNLF")
+            print("")
+            print("_UID |     Supported Platform(s)       | PWMMax")
+            print("-----------------------------------------------")
+            print(" 14  | Arrandale, Sandy/Ivy Bridge     | 0x0710")
+            print(" 15  | Haswell/Broadwell               | 0x0AD9")
+            print(" 16  | Skylake/Kaby Lake, some Haswell | 0x056C")
+            print(" 17  | Custom LMAX                     | 0x07A1")
+            print(" 18  | Custom LMAX                     | 0x1499")
+            print(" 19  | CoffeeLake and newer            | 0xFFFF")
+            print(" 99  | Other (requires custom applbkl-name/applbkl-data dev props)")
+            print("")
+            print("The _UID tells WhateverGreen what backlight data to use.")
+            print("More info can be found in WEG's kern_weg.cpp here under appleBacklightData")
+            print("")
+            print("M. Main Menu")
+            print("Q. Quit")
+            print("")
+            menu = self.u.grab("Please select the target _UID value:  ")
+            if menu.lower() == "m": return
+            elif menu.lower() == "q": self.u.custom_quit()
+            try: uid = int(menu)
+            except: continue
+            if not uid in (14,15,16,17,18,19):
+                while True:
+                    self.u.head("Custom _UID for PNLF")
+                    print("")
+                    print("{} is a custom _UID which may require customization to setup,".format(uid))
+                    print("or not have support at all.")
+                    print("")
+                    menu = self.u.grab("Are you sure you want to use it? (y/n):  ")
+                    if not menu.lower() in ("y","n"): continue
+                    break
+                if menu.lower() == "n": continue
+            break
+        self.u.head("Generating PNLF")
+        print("")
+        print("Creating SSDT-PNLF...")
+        print(" - Path: {}".format(igpu))
+        print(" - _UID: {}".format(uid))
+        if guessed:
+            print("")
+            print("!!WARNING!!  THIS PATH WAS GUESSED AND MAY NOT BE CORRECT!")
+            print("")
+        ssdt = """DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
+{
+    External ([[igpu_path]], DeviceObj)
+
+    If (_OSI ("Darwin"))
+    {
+        Device ([[igpu_path]].PNLF)
+        {
+            Name (_HID, EisaId ("APP0002"))  // _HID: Hardware ID
+            Name (_CID, "backlight")  // _CID: Compatible ID
+            Name (_UID, [[uid_value]])  // _UID: Unique ID
+            Name (_STA, 0x0B)  // _STA: Status
+        }
+    }
+}""".replace("[[igpu_path]]",igpu).replace("[[uid_value]]",self.hexy(uid))
+        self.write_ssdt("SSDT-PNLF",ssdt)
+        oc = {"Comment":"Defines PNLF device with a _UID of {} for backlight control".format(uid),"Enabled":True,"Path":"SSDT-PNLF.aml"}
+        self.make_plist(oc, "SSDT-PNLF.aml", (), replace=True)
+        print("")
+        print("Done.")
+        self.patch_warn()
+        self.u.grab("Press [enter] to return...")
+        return
+
     def main(self):
         self.u.resize(self.w,self.h)
         cwd = os.getcwd()
@@ -1399,7 +1523,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         print("7. AWAC          - Context-Aware AWAC Disable and RTC Fake")
         print("8. USB Reset     - Reset USB controllers to allow hardware mapping")
         print("9. PCI Bridge    - Create missing PCI bridges for passed device path")
-        print("0. XOSI          - _OSI rename and patch to return true for a range of Windows")
+        print("0. PNLF          - Sets up a PNLF device for laptop backlight control")
+        print("A. XOSI          - _OSI rename and patch to return true for a range of Windows")
         print("                   versions - also checks for OSID")
         print("")
         if sys.platform.startswith("linux") or sys.platform == "win32":
@@ -1434,6 +1559,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         elif menu == "9":
             self.pci_bridge()
         elif menu == "0":
+            self.ssdt_pnlf()
+        elif menu.lower() == "a":
             self.ssdt_xosi()
         elif menu.lower() == "p" and (sys.platform.startswith("linux") or sys.platform == "win32"):
             self.dsdt = self.d.dump_dsdt(os.path.join(os.path.dirname(os.path.realpath(__file__)), self.output))
