@@ -296,6 +296,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP ", "SsdtEC", 0x00001000)
             print("")
             self.u.grab("Press [enter] to return to main menu...")
             return
+        else:
+            print(" - Found {}".format(cpu_name))
         oc = {"Comment":"Plugin Type","Enabled":True,"Path":"SSDT-PLUG.aml"}
         self.make_plist(oc, "SSDT-PLUG.aml", ())
         print("Creating SSDT-PLUG...")
@@ -348,10 +350,10 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
             print("")
             self.u.grab("Press [enter] to return to main menu...")
             return
-        print("Locating ACPI0007 devices...")
+        print(" - Locating ACPI0007 devices...")
         core_list = self.d.get_device_paths_with_hid("ACPI0007")
         core_number = len(core_list) - 1
-        print(f"Found {core_number + 1} cores.")
+        print(f" - Found {core_number + 1} cores.")
         first_core = core_list[0][0].split(".")[2]
         if first_core == "CP00":
             core_prefix = "C0"
