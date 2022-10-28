@@ -7,7 +7,7 @@ class DSDT:
         self.r  = run.Run()
         self.u    = utils.Utils("SSDT Time")
         self.iasl_url_macOS = "https://raw.githubusercontent.com/acidanthera/MaciASL/master/Dist/iasl-stable"
-        self.iasl_url_linux = "http://amdosx.catra.club/iasl.zip"
+        self.iasl_url_linux = "https://raw.githubusercontent.com/corpnewt/linux_iasl/main/iasl.zip"
         self.iasl_url_windows = "https://acpica.org/sites/acpica/files/iasl-win-20200528.zip"
         self.acpi_binary_tools = "https://www.acpica.org/downloads/binary-tools"
         self.iasl = self.check_iasl()
