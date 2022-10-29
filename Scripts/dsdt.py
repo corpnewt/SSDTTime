@@ -86,7 +86,7 @@ class DSDT:
         # iasl zip
         try:
             source = self.dl.get_string(self.acpi_binary_tools)
-            url = source.lower().split("\">iasl compiler and windows acpi tools")[0].split("<a href=\"")[-1]
+            url = source.split("\">iASL compiler and Windows ACPI tools")[0].split("<a href=\"")[-1]
             return url
         except: pass
         return None
