@@ -15,6 +15,7 @@ class SSDT:
         self.w = 80
         self.h = 24
         if os.name == "nt":
+            os.system("color") # Allow ASNI color escapes.
             self.w = 120
             self.h = 30
         self.iasl = None
@@ -167,8 +168,8 @@ class SSDT:
 
     def patch_warn(self):
         # Warn users to ensure they merge the patches_XX.plist contents with their config.plist
-        print("\n!!WARNING!!  Make sure you merge the contents of patches_[OC/Clover].plist")
-        print("             with your config.plist!\n")
+        print("\n\u001b[41;1m!! WARNING !!\u001b[0m  Make sure you merge the contents of patches_[OC/Clover].plist")
+        print("               with your config.plist!\n")
 
     def fake_ec(self, laptop = False):
         rename = False
@@ -793,7 +794,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
     def ssdt_awac(self):
         if not self.ensure_dsdt():
             return
-        self.u.head("SSDT AWAC")
+        self.u.head("SSDT RTCAWAC")
         print("")
         lpc_name = None
         awac_dict = self.get_sta_var(var="STAS",dev_hid="ACPI000E",dev_name="AWAC")
@@ -940,6 +941,12 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
         self.write_ssdt("SSDT-RTCAWAC",ssdt)
         print("")
         print("Done.")
+        # See if we just generated a failsafe - and encourage manual checking
+        # Would require only an RTC device (no AWAC) that has an _STA with no STAS var
+        if rtc_dict.get("valid") and not awac_dict.get("valid") and rtc_dict.get("sta") and not rtc_dict.get("has_var"):
+            print("\n   \u001b[43;1m!! NOTE !!\u001b[0m  Only RTC (no AWAC) detected with an _STA method and no STAS")
+            print("               variable! Patch(es) and SSDT-RTCAWAC created as a failsafe,")
+            print("               but verify you need them by checking the RTC._STA conditions!")
         self.patch_warn()
         self.u.grab("Press [enter] to return...")
 
