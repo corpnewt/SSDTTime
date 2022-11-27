@@ -25,6 +25,7 @@ class SSDT:
         self.legacy_irq = ["TMR","TIMR","IPIC","RTC"] # Could add HPET for extra patch-ness, but shouldn't be needed
         self.target_irqs = [0,8,11]
         self.illegal_names = ("XHC1","EHC1","EHC2","PXSX")
+        # _OSI Strings found here: https://learn.microsoft.com/en-us/windows-hardware/drivers/acpi/winacpi-osi
         self.osi_strings = {
             "Windows 2000": "Windows 2000",
             "Windows XP": "Windows 2001",
