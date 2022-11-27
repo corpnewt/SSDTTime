@@ -796,7 +796,6 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         self.u.head("SSDT AWAC")
         print("")
         lpc_name = None
-        patches = []
         awac_dict = self.get_sta_var(var="STAS",dev_hid="ACPI000E",dev_name="AWAC")
         if awac_dict.get("bail"):
             self.u.grab("Press [enter] to return to main menu...")
