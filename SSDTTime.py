@@ -748,63 +748,71 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         self.patch_warn()
         self.u.grab("Press [enter] to return...")
 
-    def ssdt_awac(self):
-        if not self.ensure_dsdt():
-            return
-        self.u.head("SSDT AWAC")
-        print("")
-        print("Locating ACPI000E (AWAC) devices...")
-        awac_list = self.d.get_device_paths_with_hid("ACPI000E")
-        if not len(awac_list):
-            print(" - Could not locate any ACPI000E devices!  SSDT-AWAC not needed!")
-            print("")
-            self.u.grab("Press [enter] to return to main menu...")
-            return
-        awac = awac_list[0]
-        root = awac[0].split(".")[0]
-        print(" - Found {}".format(awac[0]))
-        print(" --> Verifying _STA...")
-        sta  = self.d.get_method_paths(awac[0]+"._STA")
-        xsta = self.d.get_method_paths(awac[0]+".XSTA")
-        has_stas = False
-        lpc_name = None
+    def get_sta_var(self,var="STAS",dev_hid="ACPI000E",dev_name="AWAC"):
+        # Helper to check for a device, check for (and qualify) an _STA method,
+        # and look for a specific variable in the _STA scope
+        #
+        # Returns a dict with device info - only "valid" parameter is
+        # guaranteed.
+        print("Locating {} ({}) devices...".format(dev_hid,dev_name))
+        dev_list = self.d.get_device_paths_with_hid(dev_hid)
+        has_var = False
         patches = []
-        if not len(sta) and len(xsta):
-            print(" --> _STA already renamed to XSTA!  Aborting!")
+        root = None
+        if not len(dev_list):
+            print(" - Could not locate any {} devices".format(dev_hid))
+            return {"valid":False}
+        dev = dev_list[0]
+        root = dev[0].split(".")[0]
+        print(" - Found {}".format(dev[0]))
+        print(" --> Verifying _STA...")
+        sta  = self.d.get_method_paths(dev[0]+"._STA")
+        xsta = self.d.get_method_paths(dev[0]+".XSTA")
+        if xsta and not sta:
+            print(" --> _STA already renamed to XSTA!  Skipping other checks...")
+            print("     Please disable _STA to XSTA patches for this device, reboot, and try again.")
             print("")
-            self.u.grab("Press [enter] to return to main menu...")
-            return
-        if len(sta):
+            return {"valid":False,"break":True,"device":dev,"dev_name":dev_name,"dev_hid":dev_hid}
+        if sta:
             scope = "\n".join(self.d.get_scope(sta[0][1],strip_comments=True))
-            if "STAS" in scope:
-                # We have an STAS var, and should be able to just leverage it
-                has_stas = True
-                print(" --> Has STAS variable")
-            else: print(" --> Does NOT have STAS variable")
+            has_var = var in scope
+            print(" --> {} {} variable".format("Has" if has_var else "Does NOT have",var))
         else:
             print(" --> No _STA method found")
         # Let's find out of we need a unique patch for _STA -> XSTA
-        if len(sta) and not has_stas:
+        if sta and not has_var:
             print(" --> Generating _STA to XSTA patch")
             sta_index = self.d.find_next_hex(sta[0][1])[1]
             print(" ----> Found at index {}".format(sta_index))
             sta_hex  = "5F535441"
             xsta_hex = "58535441"
             padl,padr = self.d.get_shortest_unique_pad(sta_hex, sta_index)
-            patches.append({"Comment":"AWAC _STA to XSTA Rename","Find":padl+sta_hex+padr,"Replace":padl+xsta_hex+padr})
-        print("Locating PNP0B00 (RTC) devices...")
-        rtc_list  = self.d.get_device_paths_with_hid("PNP0B00")
-        rtc_fake = True
-        if len(rtc_list):
-            rtc_fake = False
-            print(" - Found at {}".format(rtc_list[0][0]))
-        else: print(" - None found - fake needed!")
-        if rtc_fake:
+            patches.append({"Comment":"{} _STA to XSTA Rename".format(dev_name),"Find":padl+sta_hex+padr,"Replace":padl+xsta_hex+padr})
+        return {"valid":True,"has_var":has_var,"sta":sta,"patches":patches,"device":dev,"dev_name":dev_name,"dev_hid":dev_hid,"root":root}
+
+    def ssdt_awac(self):
+        if not self.ensure_dsdt():
+            return
+        self.u.head("SSDT AWAC")
+        print("")
+        lpc_name = None
+        patches = []
+        awac_dict = self.get_sta_var(var="STAS",dev_hid="ACPI000E",dev_name="AWAC")
+        if awac_dict.get("bail"):
+            self.u.grab("Press [enter] to return to main menu...")
+            return
+        rtc_dict = self.get_sta_var(var="STAS",dev_hid="PNP0B00",dev_name="RTC")
+        if rtc_dict.get("bail"):
+            self.u.grab("Press [enter] to return to main menu...")
+        # At this point - we should have any info about our AWAC and RTC devices
+        # we need.  Let's see if we need an RTC fake - then build the SSDT.
+        if not rtc_dict.get("valid"):
+            print(" - Fake needed!")
             print("Locating LPC(B)/SBRG...")
             ec_list = self.d.get_device_paths_with_hid("PNP0C09")
-            if len(ec_list):
+            if ec_list:
                 lpc_name = ".".join(ec_list[0][0].split(".")[:-1])
-            if lpc_name == None:
+            if lpc_name is None:
                 for x in ("LPCB", "LPC0", "LPC", "SBRG", "PX40"):
                     try:
                         lpc_name = self.d.get_device_paths(x)[0][0]
@@ -815,25 +823,34 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
                 print("")
                 self.u.grab("Press [enter] to return to main menu...")
                 return
+        # Let's see if we even need an SSDT
+        # Not required if AWAAC is not present; RTC is present, doesn't have an STAS var, and doesn't have an _STA method
+        if not awac_dict.get("valid") and rtc_dict.get("valid") and not rtc_dict.get("has_var") and not rtc_dict.get("sta"):
+            print("")
+            print("Valid PNP0B00 (RTC) device located and qualified, and no ACPI000E (AWAC) devices found.")
+            print("No patching or SSDT needed.")
+            print("")
+            self.u.grab("Press [enter] to return to main menu...")
+            return
+        comment = "Incompatible AWAC Fix" if awac_dict.get("valid") else "RTC Fake" if not rtc_dict.get("valid") else "RTC Enable Fix"
         # At this point - we need to do the following:
         # 1. Change STAS if needed
         # 2. Setup _STA with _OSI and call XSTA if needed
         # 3. Fake RTC if needed
-        oc = {"Comment":"Incompatible AWAC Fix","Enabled":True,"Path":"SSDT-AWAC.aml"}
-        self.make_plist(oc, "SSDT-AWAC.aml", patches)
-        print("Creating SSDT-AWAC...")
+        oc = {"Comment":comment,"Enabled":True,"Path":"SSDT-RTCAWAC.aml"}
+        self.make_plist(oc, "SSDT-RTCAWAC.aml", awac_dict.get("patches",[])+rtc_dict.get("patches",[]), replace=True)
+        print("Creating SSDT-RTCAWAC...")
         ssdt = """//
-// SSDT-AWAC source from Acidanthera
-// Originals found here:
+// Original sources from Acidanthera:
 //  - https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/SSDT-AWAC.dsl
 //  - https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/SSDT-RTC0.dsl
 //
 // Uses the CORP name to denote where this was created for troubleshooting purposes.
 //
-DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
+DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
 {
 """
-        if has_stas:
+        if any((x.get("has_var") for x in (awac_dict,rtc_dict))):
             ssdt += """    External (STAS, IntObj)
     Scope ([[Root]])
     {
@@ -845,33 +862,37 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
             }
         }
     }
-""".replace("[[Root]]",root)
-        elif len(sta):
-            # We have a renamed _STA -> XSTA method - let's leverage it
-            ssdt += """    External ([[AWACName]], DeviceObj)
-    External ([[AWACName]].XSTA, MethodObj)
-    Scope ([[AWACName]])
+""".replace("[[Root]]",awac_dict.get("root",rtc_dict.get("root","_SB")))
+        for x in (awac_dict,rtc_dict):
+            if not x.get("valid") or x.get("has_var") or not x.get("device"): continue
+            # Device was found, and it doesn't have the STAS var - check if we
+            # have an _STA (which would be renamed)
+            macos,original = ("Zero","0x0F") if x.get("dev_hid") == "ACPI000E" else ("0x0F","Zero")
+            if x.get("sta"):
+                ssdt += """    External ([[DevPath]], DeviceObj)
+    External ([[DevPath]].XSTA, MethodObj)
+    Scope ([[DevPath]])
     {
-        Name (ZSTA, 0x0F)
+        Name (ZSTA, [[Original]])
         Method (_STA, 0, NotSerialized)  // _STA: Status
         {
             If (_OSI ("Darwin"))
             {
-                Return (Zero)
+                Return ([[macOS]])
             }
-            // Default to 0x0F - but return the result of the renamed XSTA if possible
-            If ((CondRefOf ([[AWACName]].XSTA)))
+            // Default to [[Original]] - but return the result of the renamed XSTA if possible
+            If ((CondRefOf ([[DevPath]].XSTA)))
             {
-                Store ([[AWACName]].XSTA(), ZSTA)
+                Store ([[DevPath]].XSTA(), ZSTA)
             }
             Return (ZSTA)
         }
     }
-""".replace("[[AWACName]]",awac[0])
-        else:
-            # No STAS, and no _STA - let's just add one
-            ssdt += """    External ([[AWACName]], DeviceObj)
-    Scope ([[AWACName]])
+""".replace("[[DevPath]]",x["device"][0]).replace("[[Original]]",original).replace("[[macOS]]",macos)
+            elif x.get("dev_hid") == "ACPI000E":
+                # AWAC device with no STAS, and no _STA - let's just add one
+                ssdt += """    External ([[DevPath]], DeviceObj)
+    Scope ([[DevPath]])
     {
         Method (_STA, 0, NotSerialized)  // _STA: Status
         {
@@ -885,8 +906,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
             }
         }
     }
-""".replace("[[AWACName]]",awac[0])
-        if rtc_fake:
+""".replace("[[DevPath]]",x["device"][0])
+        # Check if we do not have an RTC device at all
+        if not rtc_dict.get("valid") and lpc_name:
             ssdt += """    External ([[LPCName]], DeviceObj)    // (from opcode)
     Scope ([[LPCName]])
     {
@@ -916,7 +938,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "AWAC", 0x00000000)
     }
 """.replace("[[LPCName]]",lpc_name)
         ssdt += "}"
-        self.write_ssdt("SSDT-AWAC",ssdt)
+        self.write_ssdt("SSDT-RTCAWAC",ssdt)
         print("")
         print("Done.")
         self.patch_warn()
@@ -1520,7 +1542,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         print("4. USBX          - Power properties for USB on SKL and newer SMBIOS")
         print("5. PluginType    - Sets plugin-type = 1 on First ProcessorObj")
         print("6. PMC           - Enables Native NVRAM on True 300-Series Boards")
-        print("7. AWAC          - Context-Aware AWAC Disable and RTC Fake")
+        print("7. RTCAWAC       - Context-Aware AWAC Disable and RTC Enable/Fake")
         print("8. USB Reset     - Reset USB controllers to allow hardware mapping")
         print("9. PCI Bridge    - Create missing PCI bridges for passed device path")
         print("0. PNLF          - Sets up a PNLF device for laptop backlight control")
