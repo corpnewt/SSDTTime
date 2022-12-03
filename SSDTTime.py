@@ -1142,11 +1142,19 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
     def ssdt_xosi(self):
         if not self.ensure_dsdt():
             return
+        # Let's see what, if any, the highest version contained in the DSDT is
+        highest_osi = None
+        for x in self.osi_strings:
+            if self.osi_strings[x] in self.d.dsdt:
+                highest_osi = x
         while True:
             lines = [""]
             pad = len(str(len(self.osi_strings)))
             for i,x in enumerate(self.osi_strings,start=1):
                 lines.append("{}. {} ({})".format(str(i).rjust(pad),x,self.osi_strings[x]))
+            if highest_osi:
+                lines.append("")
+                lines.append("A. Auto-Detected ({} - {})".format(highest_osi,self.osi_strings[highest_osi]))
             lines.append("")
             lines.append("M. Main")
             lines.append("Q. Quit")
@@ -1156,7 +1164,12 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             print("\n".join(lines))
             menu = self.u.grab("Please select the latest Windows version for SSDT-XOSI:  ")
             if menu.lower() == "m": return
-            if menu.lower() == "q": self.u.custom_quit()
+            if menu.lower() == "q":
+                self.u.resize(self.w,self.h)
+                self.u.custom_quit()
+            if menu.lower() == "a" and highest_osi:
+                target_string = highest_osi
+                break
             # Make sure we got a number - and it's within our range
             try:
                 target_string = list(self.osi_strings)[int(menu)-1]
