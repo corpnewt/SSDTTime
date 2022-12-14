@@ -484,7 +484,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
 
     def get_irq_choice(self, irqs):
         while True:
-            pad = 19
+            pad = 24
             self.u.head("Select IRQs To Nullify")
             print("")
             print("Current Legacy IRQs:")
@@ -498,6 +498,10 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
             print("C. Only Conflicting IRQs from Legacy Devices ({} from IPIC/TMR/RTC)".format(",".join([str(x) for x in self.target_irqs]) if len(self.target_irqs) else "None"))
             print("O. Only Conflicting IRQs ({})".format(",".join([str(x) for x in self.target_irqs]) if len(self.target_irqs) else "None"))
             print("L. Legacy IRQs (from IPIC, TMR/TIMR, and RTC)")
+            print("N. None")
+            print("")
+            print("M. Main Menu")
+            print("Q. Quit")
             print("")
             print("You can also type your own list of Devices and IRQs.")
             print("The format is DEV1:IRQ1,IRQ2 DEV2:IRQ3,IRQ4")
@@ -508,8 +512,14 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
             menu = self.u.grab("Please select an option (default is C):  ")
             if not len(menu):
                 menu = "c"
+            if menu.lower() == "m": return None
+            elif menu.lower() == "q":
+                self.u.resize(self.w,self.h)
+                self.u.custom_quit()
             d = {}
-            if menu.lower() == "o":
+            if menu.lower() == "n":
+                pass # Don't populate d at all
+            elif menu.lower() == "o":
                 for x in irqs:
                     d[x] = self.target_irqs
             elif menu.lower() == "l":
@@ -542,40 +552,97 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
             return
         self.u.head("Fix HPET")
         print("")
-        print("Locating HPET's _CRS Method...")
-        devices = self.d.get_devices("Method (_CRS")
-        hpet = self.d.get_method_paths("HPET._CRS")
-        if not hpet:
-            # Didn't find a _CRS Method - check for Name
-            hpet = self.d.get_name_paths("HPET._CRS")
-        if not hpet:
-            print(" - Could not locate HPET's _CRS! Aborting!")
-            # Check for XCRS to see if the rename is already applied
-            hpatch = self.d.get_method_paths("HPET.XCRS")
-            if not hpatch:
-                # Didn't find XCRS Method - check for Name
-                hpatch = self.d.get_name_paths("HPET.XCRS")
-            if hpatch:
-                print(" --> Appears to already be named XCRS!")
-            print("")
-            self.u.grab("Press [enter] to return to main menu...")
-            return
-        crs_index = self.d.find_next_hex(hpet[0][1])[1]
-        print(" - Found at index {}".format(crs_index))
-        crs  = "5F435253"
-        xcrs = "58435253"
-        padl,padr = self.d.get_shortest_unique_pad(crs, crs_index)
-        patches = [{"Comment":"HPET _CRS to XCRS Rename","Find":padl+crs+padr,"Replace":padl+xcrs+padr}]
+        print("Locating PNP0103 (HPET) devices...")
+        hpets = self.d.get_device_paths_with_hid("PNP0103")
+        hpet_fake = not hpets
+        if hpets:
+            name = hpets[0][0]
+            print("Locating HPET's _CRS Method/Name...")
+            hpet = self.d.get_method_paths(name+"._CRS") or self.d.get_name_paths(name+"._CRS")
+            if not hpet:
+                print(" - Could not locate {}._CRS! Aborting!".format(name))
+                # Check for XCRS to see if the rename is already applied
+                if self.d.get_method_paths(name+".XCRS") or self.d.get_name_paths(name+".XCRS"):
+                    print(" --> Appears to already be named XCRS!")
+                print("")
+                self.u.grab("Press [enter] to return to main menu...")
+                return
+            print(" - Located at {}._CRS".format(name))
+            crs_index = self.d.find_next_hex(hpet[0][1])[1]
+            print(" - Found at index {}".format(crs_index))
+            print(" - Type: {}".format(hpet[0][-1]))
+            # Let's find the Memory32Fixed portion within HPET's _CRS method
+            print(" - Checking for Memory32Fixed...")
+            mem_base = mem_length = primed = None
+            for line in self.d.get_scope(hpets[0][1],strip_comments=True):
+                if "Memory32Fixed (" in line:
+                    primed = True
+                    continue
+                if not primed:
+                    continue
+                elif ")" in line: # Reached the end of the scope
+                    break
+                # We're primed, and not at the end - let's try to get the base and length
+                try:
+                    val = line.strip().split(",")[0].replace("Zero","0x0").replace("One","0x1")
+                    check = int(val,16)
+                except:
+                    # Couldn't convert to an int - likely using vars, fall back to defaults
+                    print(" --> Could not convert Base or Length to Integer!")
+                    break
+                # Set them in order
+                if mem_base is None:
+                    mem_base = val
+                else:
+                    mem_length = val
+                    break # Leave after we get both values
+            # Check if we found the values
+            got_mem = mem_base and mem_length
+            if got_mem:
+                print(" --> Got {} -> {}".format(mem_base,mem_length))
+            else:
+                mem_base = "0xFED00000"
+                mem_length = "0x00000400"
+                print(" --> Not located!")
+                print(" --> Using defaults {} -> {}".format(mem_base,mem_length))
+            crs  = "5F435253"
+            xcrs = "58435253"
+            padl,padr = self.d.get_shortest_unique_pad(crs, crs_index)
+            patches = [{"Comment":"{} _CRS to XCRS Rename".format(name.split(".")[-1]),"Find":padl+crs+padr,"Replace":padl+xcrs+padr}]
+        else:
+            print(" - None located!")
+            print(" - Locating LPC(B)/SBRG...")
+            ec_list = self.d.get_device_paths_with_hid("PNP0C09")
+            name = None
+            if len(ec_list):
+                name = ".".join(ec_list[0][0].split(".")[:-1])
+            if name == None:
+                for x in ("LPCB", "LPC0", "LPC", "SBRG", "PX40"):
+                    try:
+                        name = self.d.get_device_paths(x)[0][0]
+                        break
+                    except: pass
+            if not name:
+                print(" - Could not locate LPC(B)! Aborting!")
+                print("")
+                self.u.grab("Press [enter] to return to main menu...")
+                return
+            patches = []
         devs = self.list_irqs()
         target_irqs = self.get_irq_choice(devs)
+        if target_irqs is None: return # Bailed, going to the main menu
         self.u.head("Creating IRQ Patches")
         print("")
-        print(" - HPET _CRS to XCRS Rename:")
-        print("      Find: {}".format(padl+crs+padr))
-        print("   Replace: {}".format(padl+xcrs+padr))
-        print("")
+        if not hpet_fake:
+            print(" - {} _CRS to XCRS Rename:".format(name.split(".")[-1]))
+            print("      Find: {}".format(padl+crs+padr))
+            print("   Replace: {}".format(padl+xcrs+padr))
+            print("")
         print("Checking IRQs...")
         print("")
+        if not devs:
+            print(" - Nothing to patch!")
+            print("")
         # Let's apply patches as we go
         saved_dsdt = self.d.dsdt_raw
         unique_patches  = {}
@@ -622,11 +689,11 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
         if len(unique_patches):
             for x in unique_patches:
                 for i,p in enumerate(unique_patches[x]):
-                    name = "{} IRQ {} Patch".format(x, p["remd"])
+                    patch_name = "{} IRQ {} Patch".format(x, p["remd"])
                     if len(unique_patches[x]) > 1:
-                        name += " -  {} of {}".format(i+1, len(unique_patches[x]))
-                    patches.append({"Comment":name,"Find":p["find"],"Replace":p["repl"]})
-                    print(" - {}".format(name))
+                        patch_name += " -  {} of {}".format(i+1, len(unique_patches[x]))
+                    patches.append({"Comment":patch_name,"Find":p["find"],"Replace":p["repl"]})
+                    print(" - {}".format(patch_name))
                     print("      Find: {}".format(p["find"]))
                     print("   Replace: {}".format(p["repl"]))
                     print("")
@@ -640,44 +707,93 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
             print("The following may not be unique and are disabled by default!")
             print("")
             for i,x in enumerate(generic_set):
-                name = "Generic IRQ Patch {} of {} - {} - {}".format(i+1,len(generic_set),x["remd"],x["orig"])
-                patches.append({"Comment":name,"Find":x["find"],"Replace":x["repl"],"Disabled":True,"Enabled":False})
-                print(" - {}".format(name))
+                patch_name = "Generic IRQ Patch {} of {} - {} - {}".format(i+1,len(generic_set),x["remd"],x["orig"])
+                patches.append({"Comment":patch_name,"Find":x["find"],"Replace":x["repl"],"Disabled":True,"Enabled":False})
+                print(" - {}".format(patch_name))
                 print("      Find: {}".format(x["find"]))
                 print("   Replace: {}".format(x["repl"]))
                 print("")
         # Restore the original DSDT in memory
         self.d.dsdt_raw = saved_dsdt
-        print("Locating HPET...")
-        hpet = self.d.get_device_paths_with_hid("PNP0103")
-        if not hpet:
-            print("HPET could not be located.")
-            self.u.grab("Press [enter] to return to main menu...")
-            return
-        name  = hpet[0][0]
-        scope = ".".join(name.split(".")[:-1]) 
-        oc = {"Comment":"HPET _CRS (Needs _CRS to XCRS Rename)","Enabled":True,"Path":"SSDT-HPET.aml"}
+        oc = {"Comment":"{} _CRS (Needs _CRS to XCRS Rename)".format(name.split(".")[-1]),"Enabled":True,"Path":"SSDT-HPET.aml"}
         self.make_plist(oc, "SSDT-HPET.aml", patches)
         print("Creating SSDT-HPET...")
-        ssdt = """//
+        if hpet_fake:
+            ssdt = """// Fake HPET device
+//
+DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
+{
+    External ([[name]], DeviceObj)
+
+    Scope ([[name]])
+    {
+        Device (HPET)
+        {
+            Name (_HID, EisaId ("PNP0103") /* HPET System Timer */)  // _HID: Hardware ID
+            Name (_CID, EisaId ("PNP0C01") /* System Board */)  // _CID: Compatible ID
+            Method (_STA, 0, NotSerialized)  // _STA: Status
+            {
+                If (_OSI ("Darwin"))
+                {
+                    Return (0x0F)
+                }
+                Else
+                {
+                    Return (Zero)
+                }
+            }
+            Name (_CRS, ResourceTemplate ()  // _CRS: Current Resource Settings
+            {
+                IRQNoFlags ()
+                    {0,8,11}
+                Memory32Fixed (ReadWrite,
+                    0xFED00000,         // Address Base
+                    0x00000400,         // Address Length
+                    )
+            })
+        }
+    }
+}""".replace("[[name]]",name)
+        else:
+            ssdt = """//
 // Supplementary HPET _CRS from Goldfish64
 // Requires the HPET's _CRS to XCRS rename
 //
 DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
 {
-    [[ext]]
-    External ([[name]], DeviceObj)    // (from opcode)
-    Name ([[name]]._CRS, ResourceTemplate ()  // _CRS: Current Resource Settings
+    External ([[name]], DeviceObj)
+    External ([[name]].XCRS, [[type]])
+
+    Scope ([[name]])
     {
-        IRQNoFlags ()
-            {0,8,11}
-        Memory32Fixed (ReadWrite,
-            0xFED00000,         // Address Base
-            0x00000400,         // Address Length
+        Name (BUFX, ResourceTemplate ()
+        {
+            IRQNoFlags ()
+                {0,8,11}
+            Memory32Fixed (ReadWrite,
+                // [[mem]]
+                [[mem_base]],         // Address Base
+                [[mem_length]],         // Address Length
             )
-    })
-}
-""".replace("[[ext]]","External ({}, DeviceObj)    // (from opcode)".format(scope) if len(scope) else "").replace("[[name]]",name)
+        })
+        Method (_CRS, 0, Serialized)
+        {
+            // Return our buffer if booting macOS or the XCRS method
+            // no longer exists for some reason
+            If (_OSI ("Darwin") || ! CondRefOf ([[name]].XCRS))
+            {
+                Return (BUFX)
+            }
+            // Not macOS and XCRS exists - return its result
+            Return ([[name]].XCRS[[method]])
+        }
+    }
+}""".replace("[[name]]",name) \
+    .replace("[[type]]","MethodObj" if hpet[0][-1] == "Method" else "BuffObj") \
+    .replace("[[mem]]","Base/Length pulled from DSDT" if got_mem else "Default Base/Length - verify with your DSDT!") \
+    .replace("[[mem_base]]",mem_base) \
+    .replace("[[mem_length]]",mem_length) \
+    .replace("[[method]]"," ()" if hpet[0][-1]=="Method" else "")
         self.write_ssdt("SSDT-HPET",ssdt)
         print("")
         print("Done.")
