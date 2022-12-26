@@ -290,48 +290,126 @@ DefinitionBlock ("", "SSDT", 2, "CORP ", "SsdtEC", 0x00001000)
             return
         self.u.head("Plugin Type")
         print("")
+        ssdt_name = "SSDT-PLUG"
         print("Determining CPU name scheme...")
         try: cpu_name = self.d.get_processor_paths("")[0][0]
         except: cpu_name = None
-        if not cpu_name:
-            print(" - Could not locate Processor object! Aborting!")
-            print("")
-            self.u.grab("Press [enter] to return to main menu...")
-            return
-        else:
+        if cpu_name:
             print(" - Found {}".format(cpu_name))
-        oc = {"Comment":"Plugin Type","Enabled":True,"Path":"SSDT-PLUG.aml"}
-        self.make_plist(oc, "SSDT-PLUG.aml", ())
-        print("Creating SSDT-PLUG...")
-        ssdt = """
-//
-// Based on the sample found at https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/SSDT-PLUG.dsl
-//
-DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
-{
-    External ([[CPUName]], ProcessorObj)
-    Scope ([[CPUName]])
+            oc = {"Comment":"Sets plugin-type to 1 on first Processor object","Enabled":True,"Path":ssdt_name+".aml"}
+            print("Creating SSDT-PLUG...")
+            ssdt = """
+    //
+    // Based on the sample found at https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/SSDT-PLUG.dsl
+    //
+    DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
     {
-        If (_OSI ("Darwin")) {
-            Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
-            {
-                If (!Arg2)
+        External ([[CPUName]], ProcessorObj)
+        Scope ([[CPUName]])
+        {
+            If (_OSI ("Darwin")) {
+                Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
                 {
-                    Return (Buffer (One)
+                    If (!Arg2)
                     {
-                        0x03
+                        Return (Buffer (One)
+                        {
+                            0x03
+                        })
+                    }
+                    Return (Package (0x02)
+                    {
+                        "plugin-type", 
+                        One
                     })
                 }
-                Return (Package (0x02)
-                {
-                    "plugin-type", 
-                    One
-                })
             }
         }
-    }
-}""".replace("[[CPUName]]",cpu_name)
-        self.write_ssdt("SSDT-PLUG",ssdt)
+    }""".replace("[[CPUName]]",cpu_name)
+        else:
+            ssdt_name += "-ALT"
+            print("No Processor objects found...")
+            print("Checking for ACPI0007 devices...")
+            procs = self.d.get_device_paths_with_hid(hid="ACPI0007")
+            if not procs:
+                print("Could not find any Processor objects or ACPI0007 devices!")
+                print("")
+                self.u.grab("Press [enter] to return...")
+                return
+            parent = procs[0][0].split(".")[0]
+            print("Got {:,} with parent {}, iterating...".format(len(procs),parent))
+            proc_list = []
+            for proc in procs:
+                print(" - Checking {}...".format(proc[0].split(".")[-1]))
+                uid = self.d.get_path_of_type(obj_type="Name",obj=proc[0]+"._UID")
+                if not uid:
+                    print(" --> Not found!  Skipping...")
+                    continue
+                # Let's get the actual _UID value
+                try:
+                    _uid = self.d.dsdt_lines[uid[0][1]].split("_UID, ")[1].split(")")[0]
+                    print(" --> _UID: {}".format(_uid))
+                    proc_list.append((proc[0],_uid))
+                except:
+                    print(" --> Not found!  Skipping...")
+            if not proc_list:
+                print("No valid processor devices found!  Aborting...")
+                print("")
+                self.u.grab("Press [enter] to return...")
+                return
+            print("Iterating {:,} valid processor device{}...".format(len(proc_list),"" if len(proc_list)==1 else "s"))
+            ssdt = """// Original source from https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/Source/SSDT-PLUG-ALT.dsl
+    DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
+    {
+        External ([[parent]], DeviceObj)
+
+        Scope ([[parent]])
+        {""".replace("[[parent]]",parent)
+            # Walk the processor objects, and add them to the SSDT
+            for i,proc_uid in enumerate(proc_list):
+                proc,uid = proc_uid
+                adr = hex(i)[2:].upper()
+                name = "CP00"[:-len(adr)]+adr
+                ssdt+="""
+            Processor ([[name]], [[uid]], 0x00000510, 0x06)
+            {
+                // [[proc]]
+                Name (_HID, "ACPI0007" /* Processor Device */)  // _HID: Hardware ID
+                Name (_UID, [[uid]])
+                Method (_STA, 0, NotSerialized)  // _STA: Status
+                {
+                    If (_OSI ("Darwin"))
+                    {
+                        Return (0x0F)
+                    }
+                    Else
+                    {
+                        Return (Zero)
+                    }
+                }""".replace("[[name]]",name).replace("[[uid]]",uid).replace("[[proc]]",proc)
+                if i == 0: # Got the first, add plugin-type as well
+                    ssdt += """
+                Method (_DSM, 4, NotSerialized)
+                {
+                    If (LEqual (Arg2, Zero)) {
+                        Return (Buffer (One) { 0x03 })
+                    }
+
+                    Return (Package (0x02)
+                    {
+                        "plugin-type",
+                        One
+                    })
+                }"""
+                # Close up the SSDT
+                ssdt += """
+            }"""
+            ssdt += """
+        }
+    }"""
+            oc = {"Comment":"Redefines modern CPU Devices as legacy Processor objects and sets plugin-type to 1 on the first","Enabled":True,"Path":ssdt_name+".aml"}
+        self.make_plist(oc, ssdt_name+".aml", ())
+        self.write_ssdt(ssdt_name,ssdt)
         print("")
         print("Done.")
         self.patch_warn()
@@ -1676,7 +1754,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         print("2. FakeEC        - OS-Aware Fake EC")
         print("3. FakeEC Laptop - Only Builds Fake EC - Leaves Existing Untouched")
         print("4. USBX          - Power properties for USB on SKL and newer SMBIOS")
-        print("5. PluginType    - Sets plugin-type = 1 on First ProcessorObj")
+        print("5. PluginType    - Redefines CPU Objects as Processor and sets plugin-type = 1")
         print("6. PMC           - Enables Native NVRAM on True 300-Series Boards")
         print("7. RTCAWAC       - Context-Aware AWAC Disable and RTC Enable/Fake")
         print("8. USB Reset     - Reset USB controllers to allow hardware mapping")
