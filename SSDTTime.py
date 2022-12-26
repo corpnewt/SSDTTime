@@ -298,34 +298,33 @@ DefinitionBlock ("", "SSDT", 2, "CORP ", "SsdtEC", 0x00001000)
             print(" - Found {}".format(cpu_name))
             oc = {"Comment":"Sets plugin-type to 1 on first Processor object","Enabled":True,"Path":ssdt_name+".aml"}
             print("Creating SSDT-PLUG...")
-            ssdt = """
-    //
-    // Based on the sample found at https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/SSDT-PLUG.dsl
-    //
-    DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
+            ssdt = """//
+// Based on the sample found at https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/SSDT-PLUG.dsl
+//
+DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
+{
+    External ([[CPUName]], ProcessorObj)
+    Scope ([[CPUName]])
     {
-        External ([[CPUName]], ProcessorObj)
-        Scope ([[CPUName]])
-        {
-            If (_OSI ("Darwin")) {
-                Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+        If (_OSI ("Darwin")) {
+            Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+            {
+                If (!Arg2)
                 {
-                    If (!Arg2)
+                    Return (Buffer (One)
                     {
-                        Return (Buffer (One)
-                        {
-                            0x03
-                        })
-                    }
-                    Return (Package (0x02)
-                    {
-                        "plugin-type", 
-                        One
+                        0x03
                     })
                 }
+                Return (Package (0x02)
+                {
+                    "plugin-type", 
+                    One
+                })
             }
         }
-    }""".replace("[[CPUName]]",cpu_name)
+    }
+}""".replace("[[CPUName]]",cpu_name)
         else:
             ssdt_name += "-ALT"
             print("No Processor objects found...")
@@ -358,55 +357,57 @@ DefinitionBlock ("", "SSDT", 2, "CORP ", "SsdtEC", 0x00001000)
                 self.u.grab("Press [enter] to return...")
                 return
             print("Iterating {:,} valid processor device{}...".format(len(proc_list),"" if len(proc_list)==1 else "s"))
-            ssdt = """// Original source from https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/Source/SSDT-PLUG-ALT.dsl
-    DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
-    {
-        External ([[parent]], DeviceObj)
+            ssdt = """//
+// Based on the sample found at https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/Source/SSDT-PLUG-ALT.dsl
+//
+DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
+{
+    External ([[parent]], DeviceObj)
 
-        Scope ([[parent]])
-        {""".replace("[[parent]]",parent)
+    Scope ([[parent]])
+    {""".replace("[[parent]]",parent)
             # Walk the processor objects, and add them to the SSDT
             for i,proc_uid in enumerate(proc_list):
                 proc,uid = proc_uid
                 adr = hex(i)[2:].upper()
                 name = "CP00"[:-len(adr)]+adr
                 ssdt+="""
-            Processor ([[name]], [[uid]], 0x00000510, 0x06)
+        Processor ([[name]], [[uid]], 0x00000510, 0x06)
+        {
+            // [[proc]]
+            Name (_HID, "ACPI0007" /* Processor Device */)  // _HID: Hardware ID
+            Name (_UID, [[uid]])
+            Method (_STA, 0, NotSerialized)  // _STA: Status
             {
-                // [[proc]]
-                Name (_HID, "ACPI0007" /* Processor Device */)  // _HID: Hardware ID
-                Name (_UID, [[uid]])
-                Method (_STA, 0, NotSerialized)  // _STA: Status
+                If (_OSI ("Darwin"))
                 {
-                    If (_OSI ("Darwin"))
-                    {
-                        Return (0x0F)
-                    }
-                    Else
-                    {
-                        Return (Zero)
-                    }
-                }""".replace("[[name]]",name).replace("[[uid]]",uid).replace("[[proc]]",proc)
+                    Return (0x0F)
+                }
+                Else
+                {
+                    Return (Zero)
+                }
+            }""".replace("[[name]]",name).replace("[[uid]]",uid).replace("[[proc]]",proc)
                 if i == 0: # Got the first, add plugin-type as well
                     ssdt += """
-                Method (_DSM, 4, NotSerialized)
-                {
-                    If (LEqual (Arg2, Zero)) {
-                        Return (Buffer (One) { 0x03 })
-                    }
+            Method (_DSM, 4, NotSerialized)
+            {
+                If (LEqual (Arg2, Zero)) {
+                    Return (Buffer (One) { 0x03 })
+                }
 
-                    Return (Package (0x02)
-                    {
-                        "plugin-type",
-                        One
-                    })
-                }"""
+                Return (Package (0x02)
+                {
+                    "plugin-type",
+                    One
+                })
+            }"""
                 # Close up the SSDT
                 ssdt += """
-            }"""
+        }"""
             ssdt += """
-        }
-    }"""
+    }
+}"""
             oc = {"Comment":"Redefines modern CPU Devices as legacy Processor objects and sets plugin-type to 1 on the first","Enabled":True,"Path":ssdt_name+".aml"}
         self.make_plist(oc, ssdt_name+".aml", ())
         self.write_ssdt(ssdt_name,ssdt)
