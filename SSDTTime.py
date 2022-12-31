@@ -1491,6 +1491,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                 if device_dict[device].lower() == match_path.lower():
                     exact = True
                     break
+        if not matched: return
         return (matched,device_dict[matched],exact,longest)
 
     def get_device_path(self):
