@@ -1528,11 +1528,20 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         # Let's create our dictionary device paths - starting with the roots
         print("Generating device paths...")
         device_dict = {}
+        pci_root_paths = []
         for path in pci_roots:
             device_adr = self.d.get_name_paths(obj=path[0]+"._ADR")
             if device_adr and len(device_adr)==1:
                 adr = self.get_address_from_line(device_adr[0][1])
+                try:
+                    # Get only the lower address - may work around some wonky fw implementations
+                    # - for example, one I've seen had an _ADR of 0x00180000 that was reported
+                    # as PciRoot(0x0) in macOS and PCIROOT(0) in Windows...
+                    adr = adr & 0xFFFF
+                except:
+                    continue # Bad address?
                 device_dict[path[0]] = "PciRoot({})".format(self.hexy(adr))
+                pci_root_paths.append(device_dict[path[0]])
         # First - let's create a new list of tuples with the ._ADR stripped
         # The goal here is to ensure pathing is listed in the proper order.
         sanitized_paths = sorted([(x[0][0:-5],x[1],x[2]) for x in paths])
@@ -1556,7 +1565,13 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         print("Matching against {}".format(test_path))
         match = self.get_longest_match(device_dict,test_path)
         if not match:
-            print(" - No matches found!")
+            if pci_root_paths:
+                print(" - No matches found!  Your device path must at least start with")
+                print("   of the following PciRoot() options to match the passed DSDT:")
+                for p in pci_root_paths:
+                    print("   --> {}".format(p))
+            else:
+                print(" - No matches found!  Please re-check your device path.")
             print("")
             self.u.grab("Press [enter] to return...")
             return
