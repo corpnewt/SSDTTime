@@ -1536,7 +1536,6 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             device_uid = self.d.get_name_paths(obj=path[0]+"._UID")
             if device_uid and len(device_uid)==1:
                 adr = self.get_address_from_line(device_uid[0][1],split_by="_UID, ")
-                print(" - Got by _UID: {}".format(self.hexy(adr)))
             else:
                 device_adr = self.d.get_name_paths(obj=path[0]+"._ADR")
                 if device_adr and len(device_adr)==1:
