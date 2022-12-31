@@ -1422,9 +1422,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         self.u.grab("Press [enter] to return...")
         return
 
-    def get_address_from_line(self, line):
+    def get_address_from_line(self, line, split_by="_ADR, "):
         try:
-            return int(self.d.dsdt_lines[line].split("_ADR, ")[1].split(")")[0].replace("Zero","0x0").replace("One","0x1"),16)
+            return int(self.d.dsdt_lines[line].split(split_by)[1].split(")")[0].replace("Zero","0x0").replace("One","0x1"),16)
         except:
             return None
 
@@ -1524,24 +1524,34 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         print("Gathering ACPI devices...")
         # Let's gather our roots - and any other paths that and in _ADR
         pci_roots = self.d.get_device_paths_with_hid(hid="PNP0A08")
+        pci_roots += self.d.get_device_paths_with_hid(hid="PNP0A03")
+        pci_roots += self.d.get_device_paths_with_hid(hid="ACPI0016")
         paths = self.d.get_path_of_type(obj_type="Name",obj="_ADR")
         # Let's create our dictionary device paths - starting with the roots
         print("Generating device paths...")
         device_dict = {}
         pci_root_paths = []
         for path in pci_roots:
-            device_adr = self.d.get_name_paths(obj=path[0]+"._ADR")
-            if device_adr and len(device_adr)==1:
-                adr = self.get_address_from_line(device_adr[0][1])
-                try:
-                    # Get only the lower address - may work around some wonky fw implementations
-                    # - for example, one I've seen had an _ADR of 0x00180000 that was reported
-                    # as PciRoot(0x0) in macOS and PCIROOT(0) in Windows...
-                    adr = adr & 0xFFFF
-                except:
-                    continue # Bad address?
-                device_dict[path[0]] = "PciRoot({})".format(self.hexy(adr))
-                pci_root_paths.append(device_dict[path[0]])
+            if path[0] in device_dict: continue # Already have it
+            device_uid = self.d.get_name_paths(obj=path[0]+"._UID")
+            if device_uid and len(device_uid)==1:
+                adr = self.get_address_from_line(device_uid[0][1],split_by="_UID, ")
+                print(" - Got by _UID: {}".format(self.hexy(adr)))
+            else:
+                device_adr = self.d.get_name_paths(obj=path[0]+"._ADR")
+                if device_adr and len(device_adr)==1:
+                    adr = self.get_address_from_line(device_adr[0][1])
+                    try:
+                        # Get only the lower address - may work around some wonky fw implementations
+                        # - for example, one I've seen had an _ADR of 0x00180000 that was reported
+                        # as PciRoot(0x0) in macOS and PCIROOT(0) in Windows...
+                        adr = adr & 0xFFFF
+                    except:
+                        continue # Bad address?
+                else: # Assume 0
+                    adr = 0
+            device_dict[path[0]] = "PciRoot({})".format(self.hexy(adr))
+            pci_root_paths.append(device_dict[path[0]])
         # First - let's create a new list of tuples with the ._ADR stripped
         # The goal here is to ensure pathing is listed in the proper order.
         sanitized_paths = sorted([(x[0][0:-5],x[1],x[2]) for x in paths])
@@ -1660,6 +1670,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
             print(" - Not found!")
             print("Searching common iGPU names...")
             pci_roots = self.d.get_device_paths_with_hid(hid="PNP0A08")
+            pci_roots += self.d.get_device_aths_with_hid(hid="PNP0A03")
+            pci_roots += self.d.get_device_paths_with_hid(hid="ACPI0016")
             external = []
             for line in self.d.dsdt_lines:
                 if not line.strip().startswith("External ("): continue # We don't need it
