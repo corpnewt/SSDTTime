@@ -1536,19 +1536,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             device_uid = self.d.get_name_paths(obj=path[0]+"._UID")
             if device_uid and len(device_uid)==1:
                 adr = self.get_address_from_line(device_uid[0][1],split_by="_UID, ")
-            else:
-                device_adr = self.d.get_name_paths(obj=path[0]+"._ADR")
-                if device_adr and len(device_adr)==1:
-                    adr = self.get_address_from_line(device_adr[0][1])
-                    try:
-                        # Get only the lower address - may work around some wonky fw implementations
-                        # - for example, one I've seen had an _ADR of 0x00180000 that was reported
-                        # as PciRoot(0x0) in macOS and PCIROOT(0) in Windows...
-                        adr = adr & 0xFFFF
-                    except:
-                        continue # Bad address?
-                else: # Assume 0
-                    adr = 0
+            else: # Assume 0
+                adr = 0
             device_dict[path[0]] = "PciRoot({})".format(self.hexy(adr))
             pci_root_paths.append(device_dict[path[0]])
         # First - let's create a new list of tuples with the ._ADR stripped
