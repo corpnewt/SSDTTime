@@ -23,7 +23,7 @@ class SSDT:
         self.scripts = "Scripts"
         self.output = "Results"
         self.legacy_irq = ["TMR","TIMR","IPIC","RTC"] # Could add HPET for extra patch-ness, but shouldn't be needed
-        self.target_irqs = [0,8,11]
+        self.target_irqs = [0,2,8,11]
         self.illegal_names = ("XHC1","EHC1","EHC2","PXSX")
         # _OSI Strings found here: https://learn.microsoft.com/en-us/windows-hardware/drivers/acpi/winacpi-osi
         self.osi_strings = {
@@ -421,6 +421,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         # saving the IRQNoFlags if found
         devices = {}
         current_device = None
+        current_hid = None
         irq = False
         last_irq = False
         irq_index = 0
@@ -434,18 +435,29 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                 num = "#" if not len(num) else num
                 if current_device in devices:
                     if last_irq: # In a row
-                        devices[current_device] += ":"+num
+                        devices[current_device]["irq"] += ":"+num
                     else: # Skipped at least one line
                         irq_index = self.d.find_next_hex(index)[1]
-                        devices[current_device] += "-"+str(irq_index)+"|"+num
+                        devices[current_device]["irq"] += "-"+str(irq_index)+"|"+num
                 else:
                     irq_index = self.d.find_next_hex(index)[1]
-                    devices[current_device] = str(irq_index)+"|"+num
+                    devices[current_device] = {"irq":str(irq_index)+"|"+num}
                 irq = False
                 last_irq = True
             elif "Device (" in line:
-                current_device = line.split("(")[1].split(")")[0]
+                # Check if we retain the _HID here
+                if current_device and current_device in devices and current_hid:
+                    # Save it
+                    devices[current_device]["hid"] = current_hid
                 last_irq = False
+                current_hid = None
+                try: current_device = line.split("(")[1].split(")")[0]
+                except:
+                    current_device = None
+                    continue
+            elif "_HID, " in line and current_device:
+                try: current_hid = line.split('"')[1]
+                except Exception as e: print(line); print(e); pass
             elif "IRQNoFlags" in line and current_device:
                 # Next line has our interrupts
                 irq = True
@@ -453,6 +465,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
             elif len(line.replace("{","").replace("}","").replace("(","").replace(")","").replace(" ","").split("//")[0]):
                 # Reset last IRQ as it's not in a row
                 last_irq = False
+        # Retain the final _HID if needed
+        if current_device and current_device in devices and current_hid:
+            devices[current_device]["hid"] = current_hid
         return devices
 
     def get_hex_from_irqs(self, irq, rem_irq = None):
@@ -562,6 +577,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         }
 
     def get_irq_choice(self, irqs):
+        hid_pad = max((len(irqs[x].get("hid","")) for x in irqs))
+        names_and_hids = ["PIC","IPIC","TMR","TIMR","RTC","RTC0","RTC1","PNPC0000","PNP0100","PNP0B00"]
+        defaults = [x for x in irqs if x.upper() in names_and_hids or irqs[x].get("hid","").upper() in names_and_hids]
         while True:
             pad = 24
             self.u.head("Select IRQs To Nullify")
@@ -572,17 +590,30 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                 print(" - None Found")
             pad+=len(irqs) if len(irqs) else 1
             for x in irqs:
-                print(" - {}: {}".format(x.rjust(4," "),self.get_all_irqs(irqs[x])))
+                if not hid_pad:
+                    print(" {} {}: {}".format(
+                        "*" if x.upper() in names_and_hids else " ",
+                        x.rjust(4," "),
+                        self.get_all_irqs(irqs[x]["irq"])
+                    ))
+                else:
+                    print(" {} {} {}: {}".format(
+                        "*" if x.upper() in names_and_hids or irqs[x].get("hid","").upper() in names_and_hids else " ",
+                        x.rjust(4," "),
+                        ("- "+irqs[x].get("hid","").rjust(hid_pad," ")) if irqs[x].get("hid") else "".rjust(hid_pad+2," "),
+                        self.get_all_irqs(irqs[x]["irq"])
+                    ))
             print("")
-            print("C. Only Conflicting IRQs from Legacy Devices ({} from IPIC/TMR/RTC)".format(",".join([str(x) for x in self.target_irqs]) if len(self.target_irqs) else "None"))
+            print("C. Only Conflicting IRQs from Legacy Devices ({} from * devices)".format(",".join([str(x) for x in self.target_irqs]) if len(self.target_irqs) else "None"))
             print("O. Only Conflicting IRQs ({})".format(",".join([str(x) for x in self.target_irqs]) if len(self.target_irqs) else "None"))
-            print("L. Legacy IRQs (from IPIC, TMR/TIMR, and RTC)")
+            print("L. Legacy IRQs (from * devices)")
             print("N. None")
             print("")
             print("M. Main Menu")
             print("Q. Quit")
             print("")
-            print("You can also type your own list of Devices and IRQs.")
+            print("* Indicates a typically troublesome device")
+            print("You can also type your own list of Devices and IRQs")
             print("The format is DEV1:IRQ1,IRQ2 DEV2:IRQ3,IRQ4")
             print("You can omit the IRQ# to remove all from that device (DEV1: DEV2:1,2,3)")
             print("For example, to remove IRQ 0 from RTC, all from IPIC, and 8 and 11 from TMR:\n")
@@ -602,10 +633,10 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                 for x in irqs:
                     d[x] = self.target_irqs
             elif menu.lower() == "l":
-                for x in ["IPIC","TMR","TIMR","RTC"]:
+                for x in defaults:
                     d[x] = []
             elif menu.lower() == "c":
-                for x in ["IPIC","TMR","TIMR","RTC"]:
+                for x in defaults:
                     d[x] = self.target_irqs
             else:
                 # User supplied
@@ -729,7 +760,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         for dev in devs:
             if not dev in target_irqs:
                 continue
-            irq_patches = self.get_hex_from_irqs(devs[dev],target_irqs[dev])
+            irq_patches = self.get_hex_from_irqs(devs[dev]["irq"],target_irqs[dev])
             i = [x for x in irq_patches if x["changed"]]
             for a,t in enumerate(i):
                 if not t["changed"]:
