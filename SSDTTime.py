@@ -457,7 +457,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                     continue
             elif "_HID, " in line and current_device:
                 try: current_hid = line.split('"')[1]
-                except Exception as e: print(line); print(e); pass
+                except: pass
             elif "IRQNoFlags" in line and current_device:
                 # Next line has our interrupts
                 irq = True
