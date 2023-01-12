@@ -64,6 +64,10 @@ class SSDT:
             self.u.custom_quit()
         out = self.u.check_path(dsdt)
         if out:
+            self.u.head("Loading DSDT")
+            print("")
+            print("Loading {}...".format(out))
+            print("")
             if self.d.load(out):
                 return out
         return self.select_dsdt()
@@ -998,7 +1002,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         xsta = self.d.get_method_paths(dev[0]+".XSTA")
         if xsta and not sta:
             print(" --> _STA already renamed to XSTA!  Skipping other checks...")
-            print("     Please disable _STA to XSTA patches for this device, reboot, and try again.")
+            print("     Please disable _STA to XSTA renames for this device, reboot, and try again.")
             print("")
             return {"valid":False,"break":True,"device":dev,"dev_name":dev_name,"dev_hid":dev_hid}
         if sta:
@@ -1009,11 +1013,11 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
             print(" --> No _STA method found")
         # Let's find out of we need a unique patch for _STA -> XSTA
         if sta and not has_var:
-            print(" --> Generating _STA to XSTA patch")
+            print(" --> Generating _STA to XSTA rename")
             sta_index = self.d.find_next_hex(sta[0][1])[1]
             print(" ----> Found at index {}".format(sta_index))
-            sta_hex  = "5F535441"
-            xsta_hex = "58535441"
+            sta_hex  = "5F535441" # _STA
+            xsta_hex = "58535441" # XSTA
             padl,padr = self.d.get_shortest_unique_pad(sta_hex, sta_index)
             patches.append({"Comment":"{} _STA to XSTA Rename".format(dev_name),"Find":padl+sta_hex+padr,"Replace":padl+xsta_hex+padr})
         return {"valid":True,"has_var":has_var,"sta":sta,"patches":patches,"device":dev,"dev_name":dev_name,"dev_hid":dev_hid,"root":root}
@@ -1023,14 +1027,12 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
             return
         self.u.head("SSDT RTCAWAC")
         print("")
+        rtc_range_needed = False
+        rtc_crs_type = None
+        crs_lines = []
         lpc_name = None
         awac_dict = self.get_sta_var(var="STAS",dev_hid="ACPI000E",dev_name="AWAC")
-        if awac_dict.get("bail"):
-            self.u.grab("Press [enter] to return to main menu...")
-            return
         rtc_dict = self.get_sta_var(var="STAS",dev_hid="PNP0B00",dev_name="RTC")
-        if rtc_dict.get("bail"):
-            self.u.grab("Press [enter] to return to main menu...")
         # At this point - we should have any info about our AWAC and RTC devices
         # we need.  Let's see if we need an RTC fake - then build the SSDT.
         if not rtc_dict.get("valid"):
@@ -1050,16 +1052,73 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
                 print("")
                 self.u.grab("Press [enter] to return to main menu...")
                 return
+        else:
+            # Let's check if our RTC device has a _CRS variable - and if so, let's look for any skipped ranges
+            print(" --> Checking for _CRS...")
+            rtc_crs = self.d.get_method_paths(rtc_dict["device"][0]+"._CRS") or self.d.get_name_paths(rtc_dict["device"][0]+"._CRS")
+            if rtc_crs:
+                print(" ----> {}".format(rtc_crs[0][0]))
+                rtc_crs_type = "MethodObj" if rtc_crs[0][-1] == "Method" else "BuffObj"
+                print(" --> Checking RTC range...")
+                last_adr = last_len = last_ind = None
+                crs_scope = self.d.get_scope(rtc_crs[0][1])
+                # Let's try and clean up the scope - it's often a jumbled mess
+                pad_len = len(crs_scope[0])-len(crs_scope[0].lstrip())
+                pad = crs_scope[0][:pad_len]
+                fixed_scope = []
+                for line in crs_scope:
+                    if line.startswith(pad): # Got a full line - strip the pad, and save it
+                        fixed_scope.append(line[pad_len:])
+                    else: # Likely a part of the prior line
+                        fixed_scope[-1] = fixed_scope[-1]+line
+                for i,line in enumerate(fixed_scope):
+                    if "IO (Decode16," in line:
+                        # We have our start - get the the next line, and 4th line
+                        try:
+                            curr_adr = int(fixed_scope[i+1].strip().split(",")[0],16)
+                            curr_len = int(fixed_scope[i+4].strip().split(",")[0],16)
+                            curr_ind = i+4 # Save the value we may pad
+                        except: # Bad values? Bail...
+                            print(" ----> Failed to gather values - could not verify RTC range.")
+                            rtc_range_needed = False
+                            break
+                        if last_adr is not None: # Compare our range values
+                            adjust = curr_adr - (last_adr + last_len)
+                            if adjust: # We need to increment the previous length by our adjust value
+                                rtc_range_needed = True
+                                print(" ----> Adjusting IO range {} length to {}".format(self.hexy(last_adr,pad_to=4),self.hexy(last_len+adjust,pad_to=2)))
+                                try:
+                                    hex_find,hex_repl = self.hexy(last_len,pad_to=2),self.hexy(last_len+adjust,pad_to=2)
+                                    crs_lines[last_ind] = crs_lines[last_ind].replace(hex_find,hex_repl)
+                                except:
+                                    print(" ----> Failed to adjust values - could not verify RTC range.")
+                                    rtc_range_needed = False
+                                    break
+                        # Save our last values
+                        last_adr,last_len,last_ind = curr_adr,curr_len,curr_ind
+                    crs_lines.append(line)
+                if rtc_range_needed: # We need to generate a rename for _CRS -> XCRS
+                    print(" --> Generating _CRS to XCRS rename...")
+                    crs_index = self.d.find_next_hex(rtc_crs[0][1])[1]
+                    print(" ----> Found at index {}".format(crs_index))
+                    crs_hex  = "5F435253" # _CRS
+                    xcrs_hex = "58435253" # XCRS
+                    padl,padr = self.d.get_shortest_unique_pad(crs_hex, crs_index)
+                    patches = rtc_dict.get("patches",[])
+                    patches.append({"Comment":"{} _CRS to XCRS Rename".format(rtc_dict["dev_name"]),"Find":padl+crs_hex+padr,"Replace":padl+xcrs_hex+padr})
+                    rtc_dict["patches"] = patches
+            else:
+                print(" ----> Not found")
         # Let's see if we even need an SSDT
-        # Not required if AWAAC is not present; RTC is present, doesn't have an STAS var, and doesn't have an _STA method
-        if not awac_dict.get("valid") and rtc_dict.get("valid") and not rtc_dict.get("has_var") and not rtc_dict.get("sta"):
+        # Not required if AWAC is not present; RTC is present, doesn't have an STAS var, and doesn't have an _STA method, and no range fixes are needed
+        if not awac_dict.get("valid") and rtc_dict.get("valid") and not rtc_dict.get("has_var") and not rtc_dict.get("sta") and not rtc_range_needed:
             print("")
             print("Valid PNP0B00 (RTC) device located and qualified, and no ACPI000E (AWAC) devices found.")
             print("No patching or SSDT needed.")
             print("")
             self.u.grab("Press [enter] to return to main menu...")
             return
-        comment = "Incompatible AWAC Fix" if awac_dict.get("valid") else "RTC Fake" if not rtc_dict.get("valid") else "RTC Enable Fix"
+        comment = "Incompatible AWAC Fix" if awac_dict.get("valid") else "RTC Fake" if not rtc_dict.get("valid") else "RTC Range Fix" if rtc_range_needed else "RTC Enable Fix"
         # At this point - we need to do the following:
         # 1. Change STAS if needed
         # 2. Setup _STA with _OSI and call XSTA if needed
@@ -1079,7 +1138,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
 """
         if any((x.get("has_var") for x in (awac_dict,rtc_dict))):
             ssdt += """    External (STAS, IntObj)
-    Scope ([[Root]])
+    Scope (\)
     {
         Method (_INI, 0, NotSerialized)  // _INI: Initialize
         {
@@ -1089,7 +1148,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
             }
         }
     }
-""".replace("[[Root]]",awac_dict.get("root",rtc_dict.get("root","_SB")))
+"""
         for x in (awac_dict,rtc_dict):
             if not x.get("valid") or x.get("has_var") or not x.get("device"): continue
             # Device was found, and it doesn't have the STAS var - check if we
@@ -1134,6 +1193,31 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
         }
     }
 """.replace("[[DevPath]]",x["device"][0])
+        # Check if we need to setup an RTC range correction
+        if rtc_range_needed and rtc_crs_type and crs_lines and rtc_dict.get("valid"):
+            ssdt += """    External ([[DevPath]], DeviceObj)
+    External ([[DevPath]].XCRS, [[type]])
+    Scope ([[DevPath]])
+    {
+        If (_OSI ("Darwin"))
+        {
+            // Adjusted _CRS method ripped from DSDT with corrected range
+[[NewCRS]]
+            // End of adjusted _CRS method
+        }
+        ElseIf ((CondRefOf ([[DevPath]].XCRS)))
+        {
+            // Create a new _CRS method that returns the result of the renamed XCRS
+            Method (_CRS, 0, Serialized)  // _CRS: Current Resource Settings
+            {
+                Return ([[DevPath]].XCRS[[method]])
+            }
+        }
+    }
+""".replace("[[DevPath]]",rtc_dict["device"][0]) \
+    .replace("[[type]]",rtc_crs_type) \
+    .replace("[[method]]"," ()" if rtc_crs_type == "Method" else "") \
+    .replace("[[NewCRS]]","\n".join([(" "*12)+x for x in crs_lines]))
         # Check if we do not have an RTC device at all
         if not rtc_dict.get("valid") and lpc_name:
             ssdt += """    External ([[LPCName]], DeviceObj)    // (from opcode)
@@ -1170,7 +1254,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
         print("Done.")
         # See if we just generated a failsafe - and encourage manual checking
         # Would require only an RTC device (no AWAC) that has an _STA with no STAS var
-        if rtc_dict.get("valid") and not awac_dict.get("valid") and rtc_dict.get("sta") and not rtc_dict.get("has_var"):
+        if rtc_dict.get("valid") and not awac_dict.get("valid") and rtc_dict.get("sta") and not rtc_dict.get("has_var") and not rtc_range_needed:
             print("\n   \u001b[43;1m!! NOTE !!\u001b[0m  Only RTC (no AWAC) detected with an _STA method and no STAS")
             print("               variable! Patch(es) and SSDT-RTCAWAC created as a failsafe,")
             print("               but verify you need them by checking the RTC._STA conditions!")
@@ -1459,8 +1543,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         except:
             return None
 
-    def hexy(self,integer):
-        return "0x"+hex(integer)[2:].upper()
+    def hexy(self,integer,pad_to=0):
+        return "0x"+hex(integer)[2:].upper().rjust(pad_to,"0")
 
     def get_bridge_devices(self, path):
         # Takes a Pci(x,x)/Pci(x,x) style path, and returns named bridges and addresses
@@ -1804,7 +1888,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         print("4. USBX          - Power properties for USB on SKL and newer SMBIOS")
         print("5. PluginType    - Redefines CPU Objects as Processor and sets plugin-type = 1")
         print("6. PMC           - Enables Native NVRAM on True 300-Series Boards")
-        print("7. RTCAWAC       - Context-Aware AWAC Disable and RTC Enable/Fake")
+        print("7. RTCAWAC       - Context-Aware AWAC Disable and RTC Enable/Fake/Range Fix")
         print("8. USB Reset     - Reset USB controllers to allow hardware mapping")
         print("9. PCI Bridge    - Create missing PCI bridges for passed device path")
         print("0. PNLF          - Sets up a PNLF device for laptop backlight control")
