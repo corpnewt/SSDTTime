@@ -1107,6 +1107,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
                     patches = rtc_dict.get("patches",[])
                     patches.append({"Comment":"{} _CRS to XCRS Rename".format(rtc_dict["dev_name"]),"Find":padl+crs_hex+padr,"Replace":padl+xcrs_hex+padr})
                     rtc_dict["patches"] = patches
+                    rtc_dict["crs"] = True
             else:
                 print(" ----> Not found")
         # Let's see if we even need an SSDT
@@ -1119,6 +1120,17 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
             self.u.grab("Press [enter] to return to main menu...")
             return
         comment = "Incompatible AWAC Fix" if awac_dict.get("valid") else "RTC Fake" if not rtc_dict.get("valid") else "RTC Range Fix" if rtc_range_needed else "RTC Enable Fix"
+        suffix  = []
+        for x in (awac_dict,rtc_dict):
+            if not x.get("valid"): continue
+            val = ""
+            if x.get("sta") and not x.get("has_var"):
+                val = "{} _STA to XSTA".format(x["dev_name"])
+            if x.get("crs"):
+                val += "{} _CRS to XCRS".format(" and " if val else x["dev_name"])
+            if val: suffix.append(val)
+        if suffix:
+            comment += " - Requires {} Rename".format(", ".join(suffix))
         # At this point - we need to do the following:
         # 1. Change STAS if needed
         # 2. Setup _STA with _OSI and call XSTA if needed
