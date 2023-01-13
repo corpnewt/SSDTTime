@@ -1416,6 +1416,56 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "UsbReset", 0x00001000)
         return
 
     def ssdt_usbx(self):
+        usbx_props = {
+            "kUSBSleepPowerSupply":"0x13EC",
+            "kUSBSleepPortCurrentLimit":"0x0834",
+            "kUSBWakePowerSupply":"0x13EC",
+            "kUSBWakePortCurrentLimit":"0x0834"
+        }
+        while True:
+            self.u.head("USBX Device")
+            print("")
+            print("Current USBX Device Properties To Use:")
+            print("")
+            if usbx_props:
+                for i,x in enumerate(usbx_props,start=1):
+                    print("{}. {} -> {}".format(i,x,usbx_props[x]))
+            else:
+                print(" - No properties set")
+            print("")
+            print("B. Build SSDT-USBX")
+            print("A. Remove All")
+            print("M. Return to Menu")
+            print("Q. Quit")
+            print("")
+            print("Remove a property by typing its key or number (ie kUSBSleepPowerSupply)")
+            print("Add/Edit a property using this format key:value (ie kUSBWakePowerSupply:0x13EC)")
+            print("Values must be a 16-bit hexadecimal integer")
+            print("")
+            menu = self.u.grab("Please enter your selection (default is B):  ")
+            if not menu: menu = "b"
+            if menu.lower() == "m": return
+            elif menu.lower() == "q": self.u.custom_quit()
+            elif menu.lower() == "a": usbx_props = {}
+            elif menu.lower() == "b" and usbx_props: break
+            elif ":" in menu:
+                try:
+                    key,value = menu.split(":")
+                    if key.isnumeric(): # Assume they want to update a number
+                        key = list(usbx_props)[int(key)-1]
+                    else: # Assume we're adding a new one - make sure it's just alpha chars
+                        key = "".join([x for x in key if x.isalpha()])
+                    value = self.hexy(int(value,16),pad_to=4)
+                    assert len(value) == 6 # Ensure it's no larger than 16-bits
+                    usbx_props[key] = value
+                except: pass
+            elif menu.isnumeric(): # Assume it's a value to remove
+                try:
+                    usbx_props.pop(list(usbx_props)[int(menu)-1],None)
+                except: pass
+            else: # Assume it's a value we're trying to remove
+                usbx_props.pop(menu,None)
+        # Now build!
         self.u.head("USBX Device")
         print("")
         print("Creating generic SSDT-USBX...")
@@ -1435,15 +1485,12 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             {
                 If (LEqual (Arg2, Zero)) { Return (Buffer () { 0x03 }) }
                 Return (Package ()
-                {
-                    "kUSBSleepPowerSupply", 
-                    0x13EC, 
-                    "kUSBSleepPortCurrentLimit", 
-                    0x0834, 
-                    "kUSBWakePowerSupply", 
-                    0x13EC, 
-                    "kUSBWakePortCurrentLimit", 
-                    0x0834
+                {"""
+        for i,key in enumerate(usbx_props,start=1):
+            ssdt += "\n                    \"{}\",".format(key)
+            ssdt += "\n                    {}".format(usbx_props[key])
+            if i < len(usbx_props): ssdt += ","
+        ssdt += """
                 })
             }
             Method (_STA, 0, NotSerialized)  // _STA: Status
