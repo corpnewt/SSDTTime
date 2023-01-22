@@ -70,6 +70,8 @@ class SSDT:
             print("")
             if self.d.load(out):
                 return out
+            else:
+                self.u.grab("\nPress [enter] to return...")
         return self.select_dsdt()
 
     def ensure_dsdt(self):
