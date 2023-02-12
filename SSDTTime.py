@@ -1533,7 +1533,10 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             self.u.resize(self.w, max(len(lines)+4,self.h))
             self.u.head("XOSI")
             print("\n".join(lines))
-            menu = self.u.grab("Please select the latest Windows version for SSDT-XOSI:  ")
+            menu = self.u.grab("Please select the latest Windows version for SSDT-XOSI{}:  ".format(
+                " (default is A)" if highest_osi else ""
+            ))
+            if not len(menu): menu = "a" # Use the default if we passed nothing
             if menu.lower() == "m": return
             if menu.lower() == "q":
                 self.u.resize(self.w,self.h)
