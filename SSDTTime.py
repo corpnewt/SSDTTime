@@ -1837,7 +1837,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
             print(" - Not found!")
             print("Searching common iGPU names...")
             pci_roots = self.d.get_device_paths_with_hid(hid="PNP0A08")
-            pci_roots += self.d.get_device_aths_with_hid(hid="PNP0A03")
+            pci_roots += self.d.get_device_paths_with_hid(hid="PNP0A03")
             pci_roots += self.d.get_device_paths_with_hid(hid="ACPI0016")
             external = []
             for line in self.d.dsdt_lines:
