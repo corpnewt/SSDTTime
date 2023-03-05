@@ -1915,6 +1915,10 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
             print("")
             print("!!WARNING!!  THIS PATH WAS GUESSED AND MAY NOT BE CORRECT!")
             print("")
+        patches = []
+        if "PNLF" in self.d.dsdt:
+            print("PNLF detected in DSDT - generating rename...")
+            patches.append({"Comment":"PNLF to XNLF Rename","Find":"504E4C46","Replace":"584E4C46"})
         ssdt = """DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
 {
     External ([[igpu_path]], DeviceObj)
@@ -1931,8 +1935,15 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
     }
 }""".replace("[[igpu_path]]",igpu).replace("[[uid_value]]",self.hexy(uid))
         self.write_ssdt("SSDT-PNLF",ssdt)
-        oc = {"Comment":"Defines PNLF device with a _UID of {} for backlight control".format(uid),"Enabled":True,"Path":"SSDT-PNLF.aml"}
-        self.make_plist(oc, "SSDT-PNLF.aml", (), replace=True)
+        oc = {
+            "Comment":"Defines PNLF device with a _UID of {} for backlight control{}".format(
+                uid,
+                " - requires PNLF to XNLF rename" if patches else ""
+            ),
+            "Enabled":True,
+            "Path":"SSDT-PNLF.aml"
+        }
+        self.make_plist(oc, "SSDT-PNLF.aml", patches, replace=True)
         print("")
         print("Done.")
         self.patch_warn()
