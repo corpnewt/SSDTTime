@@ -807,7 +807,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                 for i,p in enumerate(unique_patches[x]):
                     patch_name = "{} IRQ {} Patch".format(x, p["remd"])
                     if len(unique_patches[x]) > 1:
-                        patch_name += " -  {} of {}".format(i+1, len(unique_patches[x]))
+                        patch_name += " - {} of {}".format(i+1, len(unique_patches[x]))
                     patches.append({"Comment":patch_name,"Find":p["find"],"Replace":p["repl"]})
                     print(" - {}".format(patch_name))
                     print("      Find: {}".format(p["find"]))
