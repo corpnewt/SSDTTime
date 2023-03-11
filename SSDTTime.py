@@ -671,8 +671,16 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         print("Locating PNP0103 (HPET) devices...")
         hpets = self.d.get_device_paths_with_hid("PNP0103")
         hpet_fake = not hpets
+        patches = []
+        hpet_sta = False
         if hpets:
             name = hpets[0][0]
+            print(" - Located at {}".format(name))
+            # Let's locate any _STA methods
+            sta = self.get_sta_var(var=None,dev_hid="PNP0103",dev_name="HPET",log_locate=False)
+            if sta.get("patches"):
+                hpet_sta = True
+                patches.extend(sta.get("patches",[]))
             print("Locating HPET's _CRS Method/Name...")
             hpet = self.d.get_method_paths(name+"._CRS") or self.d.get_name_paths(name+"._CRS")
             if not hpet:
@@ -724,7 +732,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
             crs  = "5F435253"
             xcrs = "58435253"
             padl,padr = self.d.get_shortest_unique_pad(crs, crs_index)
-            patches = [{"Comment":"{} _CRS to XCRS Rename".format(name.split(".")[-1]),"Find":padl+crs+padr,"Replace":padl+xcrs+padr}]
+            patches.append({"Comment":"{} _CRS to XCRS Rename".format(name.split(".")[-1]),"Find":padl+crs+padr,"Replace":padl+xcrs+padr})
         else:
             print(" - None located!")
             print(" - Locating LPC(B)/SBRG...")
@@ -743,7 +751,6 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                 print("")
                 self.u.grab("Press [enter] to return to main menu...")
                 return
-            patches = []
         devs = self.list_irqs()
         target_irqs = self.get_irq_choice(devs)
         if target_irqs is None: return # Bailed, going to the main menu
@@ -892,24 +899,50 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
                 [[mem_length]],         // Address Length
             )
         })
-        Method (_CRS, 0, Serialized)
+        Method (_CRS, 0, Serialized)  // _CRS: Current Resource Settings
         {
             // Return our buffer if booting macOS or the XCRS method
             // no longer exists for some reason
-            If (_OSI ("Darwin") || ! CondRefOf ([[name]].XCRS))
+            If (_OSI ("Darwin") || !CondRefOf ([[name]].XCRS))
             {
                 Return (BUFX)
             }
             // Not macOS and XCRS exists - return its result
             Return ([[name]].XCRS[[method]])
-        }
-    }
-}""".replace("[[name]]",name) \
+        }""" \
+    .replace("[[name]]",name) \
     .replace("[[type]]","MethodObj" if hpet[0][-1] == "Method" else "BuffObj") \
     .replace("[[mem]]","Base/Length pulled from DSDT" if got_mem else "Default Base/Length - verify with your DSDT!") \
     .replace("[[mem_base]]",mem_base) \
     .replace("[[mem_length]]",mem_length) \
     .replace("[[method]]"," ()" if hpet[0][-1]=="Method" else "")
+        if hpet_sta:
+            # Inject our external reference to the renamed XSTA method
+            ssdt_parts = []
+            external = False
+            for line in ssdt.split("\n"):
+                if "External (" in line: external = True
+                elif external:
+                    ssdt_parts.append("    External ({}.XSTA, MethodObj)".format(name))
+                    external = False
+                ssdt_parts.append(line)
+            ssdt = "\n".join(ssdt_parts)
+            # Add our method
+            ssdt += """
+        Method (_STA, 0, NotSerialized)  // _STA: Status
+        {
+            // Return 0x0F if booting macOS or the XSTA method
+            // no longer exists for some reason
+            If (_OSI ("Darwin") || !CondRefOf ([[name]].XSTA))
+            {
+                Return (0x0F)
+            }
+            // Not macOS and XSTA exists - return its result
+            Return ([[name]].XSTA ())
+        }""".replace("[[name]]",name)
+        ssdt += """
+    }
+}"""
         self.write_ssdt("SSDT-HPET",ssdt)
         print("")
         print("Done.")
@@ -982,23 +1015,23 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         self.patch_warn()
         self.u.grab("Press [enter] to return...")
 
-    def get_sta_var(self,var="STAS",dev_hid="ACPI000E",dev_name="AWAC"):
+    def get_sta_var(self,var="STAS",dev_hid="ACPI000E",dev_name="AWAC",log_locate=True):
         # Helper to check for a device, check for (and qualify) an _STA method,
         # and look for a specific variable in the _STA scope
         #
         # Returns a dict with device info - only "valid" parameter is
         # guaranteed.
-        print("Locating {} ({}) devices...".format(dev_hid,dev_name))
+        if log_locate: print("Locating {} ({}) devices...".format(dev_hid,dev_name))
         dev_list = self.d.get_device_paths_with_hid(dev_hid)
         has_var = False
         patches = []
         root = None
         if not len(dev_list):
-            print(" - Could not locate any {} devices".format(dev_hid))
+            if log_locate: print(" - Could not locate any {} devices".format(dev_hid))
             return {"valid":False}
         dev = dev_list[0]
         root = dev[0].split(".")[0]
-        print(" - Found {}".format(dev[0]))
+        if log_locate: print(" - Found {}".format(dev[0]))
         print(" --> Verifying _STA...")
         sta  = self.d.get_method_paths(dev[0]+"._STA")
         xsta = self.d.get_method_paths(dev[0]+".XSTA")
@@ -1008,9 +1041,10 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
             print("")
             return {"valid":False,"break":True,"device":dev,"dev_name":dev_name,"dev_hid":dev_hid}
         if sta:
-            scope = "\n".join(self.d.get_scope(sta[0][1],strip_comments=True))
-            has_var = var in scope
-            print(" --> {} {} variable".format("Has" if has_var else "Does NOT have",var))
+            if var:
+                scope = "\n".join(self.d.get_scope(sta[0][1],strip_comments=True))
+                has_var = var in scope
+                print(" --> {} {} variable".format("Has" if has_var else "Does NOT have",var))
         else:
             print(" --> No _STA method found")
         # Let's find out of we need a unique patch for _STA -> XSTA
