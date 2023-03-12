@@ -1531,8 +1531,14 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             }
             Method (_STA, 0, NotSerialized)  // _STA: Status
             {
-                If (_OSI ("Darwin")) { Return (0x0F) }
-                Else { Return (Zero) }
+                If (_OSI ("Darwin"))
+                {
+                    Return (0x0F)
+                }
+                Else
+                {
+                    Return (Zero)
+                }
             }
         }
     }
@@ -1957,17 +1963,36 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
 {
     External ([[igpu_path]], DeviceObj)
 
-    If (_OSI ("Darwin"))
+    Device ([[igpu_path]].PNLF)
     {
-        Device ([[igpu_path]].PNLF)
+        Name (_HID, EisaId ("APP0002"))  // _HID: Hardware ID
+        Name (_CID, "backlight")  // _CID: Compatible ID
+
+        // _UID |     Supported Platform(s)       | PWMMax
+        // -----------------------------------------------
+        //  14  | Arrandale, Sandy/Ivy Bridge     | 0x0710
+        //  15  | Haswell/Broadwell               | 0x0AD9
+        //  16  | Skylake/Kaby Lake, some Haswell | 0x056C
+        //  17  | Custom LMAX                     | 0x07A1
+        //  18  | Custom LMAX                     | 0x1499
+        //  19  | CoffeeLake and newer            | 0xFFFF
+        //  99  | Other (requires custom applbkl-name/applbkl-data dev props)
+
+        Name (_UID, [[uid_value]])  // _UID: Unique ID: [[uid_dec]]
+        
+        Method (_STA, 0, NotSerialized)  // _STA: Status
         {
-            Name (_HID, EisaId ("APP0002"))  // _HID: Hardware ID
-            Name (_CID, "backlight")  // _CID: Compatible ID
-            Name (_UID, [[uid_value]])  // _UID: Unique ID
-            Name (_STA, 0x0B)  // _STA: Status
+            If (_OSI ("Darwin"))
+            {
+                Return (0x0B)
+            }
+            Else
+            {
+                Return (Zero)
+            }
         }
     }
-}""".replace("[[igpu_path]]",igpu).replace("[[uid_value]]",self.hexy(uid))
+}""".replace("[[igpu_path]]",igpu).replace("[[uid_value]]",self.hexy(uid)).replace("[[uid_dec]]",str(uid))
         self.write_ssdt("SSDT-PNLF",ssdt)
         oc = {
             "Comment":"Defines PNLF device with a _UID of {} for backlight control{}".format(
