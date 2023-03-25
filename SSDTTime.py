@@ -50,29 +50,70 @@ class SSDT:
             "Windows 11": "Windows 2021",
             "Windows 11, version 22H2": "Windows 2022"
         }
+        self.pre_patches = (
+            {
+                "PrePatch":"GPP7 duplicate _PRW methods",
+                "Comment" :"GPP7._PRW to XPRW to fix Gigabyte's Mistake",
+                "Find"    :"3708584847500A021406535245470214065350525701085F505257",
+                "Replace" :"3708584847500A0214065352454702140653505257010858505257"
+            },
+        )
 
     def select_dsdt(self):
-        self.u.head("Select DSDT")
-        print(" ")
-        print("M. Main")
-        print("Q. Quit")
-        print(" ")
-        dsdt = self.u.grab("Please drag and drop a DSDT.aml or origin folder here:  ")
-        if dsdt.lower() == "m":
-            return self.dsdt
-        if dsdt.lower() == "q":
-            self.u.custom_quit()
-        out = self.u.check_path(dsdt)
-        if out:
+        while True:
+            self.u.head("Select DSDT")
+            print(" ")
+            print("M. Main")
+            print("Q. Quit")
+            print(" ")
+            dsdt = self.u.grab("Please drag and drop a DSDT.aml or origin folder here:  ")
+            if dsdt.lower() == "m":
+                return self.dsdt
+            if dsdt.lower() == "q":
+                self.u.custom_quit()
+            out = self.u.check_path(dsdt)
+            if not out: continue
+            # Got a DSDT, try to load it
             self.u.head("Loading DSDT")
             print("")
             print("Loading {}...".format(out))
             print("")
-            if self.d.load(out):
-                return out
-            else:
-                self.u.grab("\nPress [enter] to return...")
-        return self.select_dsdt()
+            if self.d.load(out): return out
+            # Didn't load
+            print("Checking available pre-patches...")
+            print("Loading DSDT into memory...")
+            with open(out,"rb") as f:
+                original_d = f.read()
+            d = original_d # Make sure we are working with a copy of the data
+            patches = []
+            print("Iterating patches...")
+            for p in self.pre_patches:
+                if not all((x in p for x in ("PrePatch","Comment","Find","Replace"))): continue
+                print(" - {}".format(p["PrePatch"]))
+                find = binascii.unhexlify(p["Find"])
+                if d.count(find) == 1:
+                    patches.append(p) # Retain the patch
+                    repl = binascii.unhexlify(p["Replace"])
+                    print(" --> Located - applying...")
+                    d = d.replace(find,repl) # Replace it in memory
+                    with open(out,"wb") as f:
+                        f.write(d) # Write the updated file
+                    # Attempt to load again
+                    if self.d.load(out):
+                        # We got it to load - let's write the patches
+                        print("\nDecompiled successfully!\n")
+                        self.make_plist(None, None, patches)
+                        print("\nPatches applied directly to {}!!".format(os.path.basename(out)))
+                        self.patch_warn()
+                        self.u.grab("Press [enter] to continue...")
+                        return out
+            # No patches worked - write the original back
+            print("Restoring original file...")
+            with open(out,"wb") as f:
+                f.write(original_d)
+            print("\n{} could not be decompiled!".format(os.path.basename(out)))
+            print("")
+            self.u.grab("Press [enter] to return...")
 
     def ensure_dsdt(self):
         if self.dsdt and self.d.dsdt:
@@ -132,23 +173,28 @@ class SSDT:
                 cl_plist = plist.load(f)
         
         # Ensure all the pathing is where it needs to be
-        oc_plist = self.ensure_path(oc_plist,("ACPI","Add"))
-        oc_plist = self.ensure_path(oc_plist,("ACPI","Patch"))
-        cl_plist = self.ensure_path(cl_plist,("ACPI","SortedOrder"))
-        cl_plist = self.ensure_path(cl_plist,("ACPI","DSDT","Patches"))
+        if oc_acpi: oc_plist = self.ensure_path(oc_plist,("ACPI","Add"))
+        if cl_acpi: cl_plist = self.ensure_path(cl_plist,("ACPI","SortedOrder"))
+        if patches:
+            oc_plist = self.ensure_path(oc_plist,("ACPI","Patch"))
+            cl_plist = self.ensure_path(cl_plist,("ACPI","DSDT","Patches"))
 
         # Add the .aml references
         if replace: # Remove any conflicting entries
-            oc_plist["ACPI"]["Add"] = [x for x in oc_plist["ACPI"]["Add"] if oc_acpi["Path"] != x["Path"]]
-            cl_plist["ACPI"]["SortedOrder"] = [x for x in cl_plist["ACPI"]["SortedOrder"] if cl_acpi != x]
-        if any(oc_acpi["Path"] == x["Path"] for x in oc_plist["ACPI"]["Add"]):
-            print(" -> Add \"{}\" already in OC plist!".format(oc_acpi["Path"]))
-        else:
-            oc_plist["ACPI"]["Add"].append(oc_acpi)
-        if cl_acpi in cl_plist["ACPI"]["SortedOrder"]:
-            print(" -> \"{}\" already in Clover plist!".format(cl_acpi))
-        else:
-            cl_plist["ACPI"]["SortedOrder"].append(cl_acpi)
+            if oc_acpi:
+                oc_plist["ACPI"]["Add"] = [x for x in oc_plist["ACPI"]["Add"] if oc_acpi["Path"] != x["Path"]]
+            if cl_acpi:
+                cl_plist["ACPI"]["SortedOrder"] = [x for x in cl_plist["ACPI"]["SortedOrder"] if cl_acpi != x]
+        if oc_acpi: # Make sure we have something
+            if any(oc_acpi["Path"] == x["Path"] for x in oc_plist["ACPI"]["Add"]):
+                print(" -> Add \"{}\" already in OC plist!".format(oc_acpi["Path"]))
+            else:
+                oc_plist["ACPI"]["Add"].append(oc_acpi)
+        if cl_acpi: # Make sure we have something
+            if cl_acpi in cl_plist["ACPI"]["SortedOrder"]:
+                print(" -> \"{}\" already in Clover plist!".format(cl_acpi))
+            else:
+                cl_plist["ACPI"]["SortedOrder"].append(cl_acpi)
 
         # Iterate the patches
         for p in patches:
@@ -167,11 +213,13 @@ class SSDT:
             else:
                 print(" -> Adding Patch \"{}\" to Clover plist!".format(p["Comment"]))
                 cl_plist["ACPI"]["DSDT"]["Patches"].append(cp)         
-        # Write the plists
-        with open(os.path.join(output,"patches_OC.plist"),"wb") as f:
-            plist.dump(oc_plist,f)
-        with open(os.path.join(output,"patches_Clover.plist"),"wb") as f:
-            plist.dump(cl_plist,f)
+        # Write the plists if we have something to write
+        if oc_plist:
+            with open(os.path.join(output,"patches_OC.plist"),"wb") as f:
+                plist.dump(oc_plist,f)
+        if cl_plist:
+            with open(os.path.join(output,"patches_Clover.plist"),"wb") as f:
+                plist.dump(cl_plist,f)
 
     def patch_warn(self):
         # Warn users to ensure they merge the patches_XX.plist contents with their config.plist
@@ -732,7 +780,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
             crs  = "5F435253"
             xcrs = "58435253"
             padl,padr = self.d.get_shortest_unique_pad(crs, crs_index)
-            patches.append({"Comment":"{} _CRS to XCRS Rename".format(name.split(".")[-1]),"Find":padl+crs+padr,"Replace":padl+xcrs+padr})
+            patches.append({"Comment":"{} _CRS to XCRS Rename".format(name.split(".")[-1].lstrip("\\")),"Find":padl+crs+padr,"Replace":padl+xcrs+padr})
         else:
             print(" - None located!")
             print(" - Locating LPC(B)/SBRG...")
@@ -757,7 +805,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         self.u.head("Creating IRQ Patches")
         print("")
         if not hpet_fake:
-            print(" - {} _CRS to XCRS Rename:".format(name.split(".")[-1]))
+            print(" - {} _CRS to XCRS Rename:".format(name.split(".")[-1].lstrip("\\")))
             print("      Find: {}".format(padl+crs+padr))
             print("   Replace: {}".format(padl+xcrs+padr))
             print("")
@@ -838,7 +886,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                 print("")
         # Restore the original DSDT in memory
         self.d.dsdt_raw = saved_dsdt
-        oc = {"Comment":"{} _CRS (Needs _CRS to XCRS Rename)".format(name.split(".")[-1]),"Enabled":True,"Path":"SSDT-HPET.aml"}
+        oc = {"Comment":"{} _CRS (Needs _CRS to XCRS Rename)".format(name.split(".")[-1].lstrip("\\")),"Enabled":True,"Path":"SSDT-HPET.aml"}
         self.make_plist(oc, "SSDT-HPET.aml", patches)
         print("Creating SSDT-HPET...")
         if hpet_fake:
