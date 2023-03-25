@@ -57,6 +57,12 @@ class SSDT:
                 "Find"    :"3708584847500A021406535245470214065350525701085F505257",
                 "Replace" :"3708584847500A0214065352454702140653505257010858505257"
             },
+            {
+                "PrePatch":"GPP7 duplicate UP00 devices",
+                "Comment" :"GPP7.UP00 to UPXX to fix Gigabyte's Mistake",
+                "Find"    :"1047052F035F53425F50434930475050375B82450455503030",
+                "Replace" :"1047052F035F53425F50434930475050375B82450455505858"
+            }
         )
 
     def select_dsdt(self):
