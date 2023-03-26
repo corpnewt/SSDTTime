@@ -65,6 +65,52 @@ class SSDT:
             }
         )
 
+    def load_dsdt(self,path):
+        self.u.head("Loading DSDT")
+        print("")
+        print("Loading {}...".format(path))
+        print("")
+        if not os.path.isfile(path):
+            print("File does not exist!")
+            print("")
+            self.u.grab("Press [enter] to return...")
+        if self.d.load(path): return path
+        # Didn't load
+        print("Checking available pre-patches...")
+        print("Loading DSDT into memory...")
+        with open(path,"rb") as f:
+            original_d = f.read()
+        d = original_d # Make sure we are working with a copy of the data
+        patches = []
+        print("Iterating patches...")
+        for p in self.pre_patches:
+            if not all((x in p for x in ("PrePatch","Comment","Find","Replace"))): continue
+            print(" - {}".format(p["PrePatch"]))
+            find = binascii.unhexlify(p["Find"])
+            if d.count(find) == 1:
+                patches.append(p) # Retain the patch
+                repl = binascii.unhexlify(p["Replace"])
+                print(" --> Located - applying...")
+                d = d.replace(find,repl) # Replace it in memory
+                with open(path,"wb") as f:
+                    f.write(d) # Write the updated file
+                # Attempt to load again
+                if self.d.load(path):
+                    # We got it to load - let's write the patches
+                    print("\nDecompiled successfully!\n")
+                    self.make_plist(None, None, patches)
+                    print("\nPatches applied directly to {}!!".format(os.path.basename(path)))
+                    self.patch_warn()
+                    self.u.grab("Press [enter] to continue...")
+                    return path
+        # No patches worked - write the original back
+        print("Restoring original file...")
+        with open(path,"wb") as f:
+            f.write(original_d)
+        print("\n{} could not be decompiled!".format(os.path.basename(path)))
+        print("")
+        self.u.grab("Press [enter] to return...")
+
     def select_dsdt(self):
         while True:
             self.u.head("Select DSDT")
@@ -80,46 +126,7 @@ class SSDT:
             out = self.u.check_path(dsdt)
             if not out: continue
             # Got a DSDT, try to load it
-            self.u.head("Loading DSDT")
-            print("")
-            print("Loading {}...".format(out))
-            print("")
-            if self.d.load(out): return out
-            # Didn't load
-            print("Checking available pre-patches...")
-            print("Loading DSDT into memory...")
-            with open(out,"rb") as f:
-                original_d = f.read()
-            d = original_d # Make sure we are working with a copy of the data
-            patches = []
-            print("Iterating patches...")
-            for p in self.pre_patches:
-                if not all((x in p for x in ("PrePatch","Comment","Find","Replace"))): continue
-                print(" - {}".format(p["PrePatch"]))
-                find = binascii.unhexlify(p["Find"])
-                if d.count(find) == 1:
-                    patches.append(p) # Retain the patch
-                    repl = binascii.unhexlify(p["Replace"])
-                    print(" --> Located - applying...")
-                    d = d.replace(find,repl) # Replace it in memory
-                    with open(out,"wb") as f:
-                        f.write(d) # Write the updated file
-                    # Attempt to load again
-                    if self.d.load(out):
-                        # We got it to load - let's write the patches
-                        print("\nDecompiled successfully!\n")
-                        self.make_plist(None, None, patches)
-                        print("\nPatches applied directly to {}!!".format(os.path.basename(out)))
-                        self.patch_warn()
-                        self.u.grab("Press [enter] to continue...")
-                        return out
-            # No patches worked - write the original back
-            print("Restoring original file...")
-            with open(out,"wb") as f:
-                f.write(original_d)
-            print("\n{} could not be decompiled!".format(os.path.basename(out)))
-            print("")
-            self.u.grab("Press [enter] to return...")
+            return self.load_dsdt(out)
 
     def ensure_dsdt(self):
         if self.dsdt and self.d.dsdt:
@@ -2119,7 +2126,12 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         elif menu.lower() == "a":
             self.ssdt_xosi()
         elif menu.lower() == "p" and (sys.platform.startswith("linux") or sys.platform == "win32"):
-            self.dsdt = self.d.dump_dsdt(os.path.join(os.path.dirname(os.path.realpath(__file__)), self.output))
+            self.dsdt = self.load_dsdt(
+                self.d.dump_dsdt(
+                    os.path.join(os.path.dirname(os.path.realpath(__file__)),self.output),
+                    decompile=False
+                )
+            )
         return
 
 if __name__ == '__main__':
