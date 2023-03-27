@@ -65,6 +65,24 @@ class SSDT:
             }
         )
 
+    def get_unique_name(self,name,target_folder,name_append="-Patched"):
+        # Get a new file name in the Results folder so we don't override the original
+        name = os.path.basename(name)
+        ext  = "" if not "." in name else name.split(".")[-1]
+        if ext: name = name[:-len(ext)-1]
+        if name_append: name = name+str(name_append)
+        check_name = ".".join((name,ext)) if ext else name
+        if not os.path.exists(os.path.join(target_folder,check_name)):
+            return check_name
+        # We need a unique name
+        num = 1
+        while True:
+            check_name = "{}-{}".format(name,num)
+            if ext: check_name += "."+ext
+            if not os.path.exists(os.path.join(target_folder,check_name)):
+                return check_name
+            num += 1 # Increment our counter
+
     def load_dsdt(self,path):
         self.u.head("Loading DSDT")
         print("")
@@ -77,10 +95,12 @@ class SSDT:
         if self.d.load(path): return path
         # Didn't load
         print("Checking available pre-patches...")
-        print("Loading DSDT into memory...")
+        print("Loading {} into memory...".format(os.path.basename(path)))
         with open(path,"rb") as f:
-            original_d = f.read()
-        d = original_d # Make sure we are working with a copy of the data
+            d = f.read()
+        res = self.d.check_output(self.output)
+        target_name = self.get_unique_name(os.path.basename(path),res,name_append="-Patched")
+        target_path = os.path.join(res,target_name)
         patches = []
         print("Iterating patches...")
         for p in self.pre_patches:
@@ -92,21 +112,21 @@ class SSDT:
                 repl = binascii.unhexlify(p["Replace"])
                 print(" --> Located - applying...")
                 d = d.replace(find,repl) # Replace it in memory
-                with open(path,"wb") as f:
+                with open(target_path,"wb") as f:
                     f.write(d) # Write the updated file
                 # Attempt to load again
-                if self.d.load(path):
+                if self.d.load(target_path):
                     # We got it to load - let's write the patches
                     print("\nDecompiled successfully!\n")
                     self.make_plist(None, None, patches)
-                    print("\nPatches applied directly to {}!!".format(os.path.basename(path)))
+                    print("\n!! Patches applied to modified file in Results folder:\n   {}".format(target_name))
                     self.patch_warn()
                     self.u.grab("Press [enter] to continue...")
                     return path
         # No patches worked - write the original back
-        print("Restoring original file...")
-        with open(path,"wb") as f:
-            f.write(original_d)
+        print("Removing patched file...")
+        try: os.remove(target_path)
+        except: print(" - Failed to remove!")
         print("\n{} could not be decompiled!".format(os.path.basename(path)))
         print("")
         self.u.grab("Press [enter] to return...")
