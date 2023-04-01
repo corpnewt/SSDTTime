@@ -997,19 +997,19 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
     .replace("[[mem_base]]",mem_base) \
     .replace("[[mem_length]]",mem_length) \
     .replace("[[method]]"," ()" if hpet[0][-1]=="Method" else "")
-        if hpet_sta:
-            # Inject our external reference to the renamed XSTA method
-            ssdt_parts = []
-            external = False
-            for line in ssdt.split("\n"):
-                if "External (" in line: external = True
-                elif external:
-                    ssdt_parts.append("    External ({}.XSTA, MethodObj)".format(name))
-                    external = False
-                ssdt_parts.append(line)
-            ssdt = "\n".join(ssdt_parts)
-            # Add our method
-            ssdt += """
+            if hpet_sta:
+                # Inject our external reference to the renamed XSTA method
+                ssdt_parts = []
+                external = False
+                for line in ssdt.split("\n"):
+                    if "External (" in line: external = True
+                    elif external:
+                        ssdt_parts.append("    External ({}.XSTA, MethodObj)".format(name))
+                        external = False
+                    ssdt_parts.append(line)
+                ssdt = "\n".join(ssdt_parts)
+                # Add our method
+                ssdt += """
         Method (_STA, 0, NotSerialized)  // _STA: Status
         {
             // Return 0x0F if booting macOS or the XSTA method
@@ -1021,7 +1021,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
             // Not macOS and XSTA exists - return its result
             Return ([[name]].XSTA ())
         }""".replace("[[name]]",name)
-        ssdt += """
+            ssdt += """
     }
 }"""
         self.write_ssdt("SSDT-HPET",ssdt)
