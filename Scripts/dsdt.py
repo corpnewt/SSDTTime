@@ -86,8 +86,11 @@ class DSDT:
         # iasl zip
         try:
             source = self.dl.get_string(self.acpi_binary_tools)
-            url = source.split("\">iASL compiler and Windows ACPI tools")[0].split("<a href=\"")[-1]
-            return url
+            # acpica.org seems to muck up their links from time to time - let's try to get the first
+            # windows attachment that *isn't* the hyperlink in the landing page.
+            for line in source.split("\n"):
+                if "/iasl-win-" in line and ".zip" in line and not '">iASL compiler and Windows ACPI tools' in line:
+                    return line.split('<a href="')[1].split('"')[0]
         except: pass
         return None
     
