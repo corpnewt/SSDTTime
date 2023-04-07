@@ -754,6 +754,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         hpet_fake = not hpets
         patches = []
         hpet_sta = False
+        sta = None
         if hpets:
             name = hpets[0][0]
             print(" - Located at {}".format(name))
@@ -1004,7 +1005,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
                 for line in ssdt.split("\n"):
                     if "External (" in line: external = True
                     elif external:
-                        ssdt_parts.append("    External ({}.XSTA, MethodObj)".format(name))
+                        ssdt_parts.append("    External ({}.XSTA, {})".format(name,sta["sta_type"]))
                         external = False
                     ssdt_parts.append(line)
                 ssdt = "\n".join(ssdt_parts)
@@ -1019,8 +1020,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
                 Return (0x0F)
             }
             // Not macOS and XSTA exists - return its result
-            Return ([[name]].XSTA ())
-        }""".replace("[[name]]",name)
+            Return ([[name]].XSTA[[called]])
+        }""".replace("[[name]]",name).replace("[[called]]"," ()" if sta["sta_type"]=="MethodObj" else "")
             ssdt += """
     }
 }"""
@@ -1120,20 +1121,27 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         if log_locate: print(" - Found {}".format(dev[0]))
         root = dev[0].split(".")[0]
         print(" --> Verifying _STA...")
+        # Check Method first - then Name
+        sta_type = "MethodObj"
         sta  = self.d.get_method_paths(dev[0]+"._STA")
         xsta = self.d.get_method_paths(dev[0]+".XSTA")
+        if not sta and not xsta:
+            # Check for names
+            sta_type = "IntObj"
+            sta = self.d.get_name_paths(dev[0]+"._STA")
+            xsta = self.d.get_name_paths(dev[0]+".XSTA")
         if xsta and not sta:
             print(" --> _STA already renamed to XSTA!  Skipping other checks...")
             print("     Please disable _STA to XSTA renames for this device, reboot, and try again.")
             print("")
-            return {"valid":False,"break":True,"device":dev,"dev_name":dev_name,"dev_hid":dev_hid}
+            return {"valid":False,"break":True,"device":dev,"dev_name":dev_name,"dev_hid":dev_hid,"sta_type":sta_type}
         if sta:
             if var:
                 scope = "\n".join(self.d.get_scope(sta[0][1],strip_comments=True))
                 has_var = var in scope
                 print(" --> {} {} variable".format("Has" if has_var else "Does NOT have",var))
         else:
-            print(" --> No _STA method found")
+            print(" --> No _STA method/name found")
         # Let's find out of we need a unique patch for _STA -> XSTA
         if sta and not has_var:
             print(" --> Generating _STA to XSTA rename")
@@ -1143,7 +1151,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
             xsta_hex = "58535441" # XSTA
             padl,padr = self.d.get_shortest_unique_pad(sta_hex, sta_index)
             patches.append({"Comment":"{} _STA to XSTA Rename".format(dev_name),"Find":padl+sta_hex+padr,"Replace":padl+xsta_hex+padr})
-        return {"valid":True,"has_var":has_var,"sta":sta,"patches":patches,"device":dev,"dev_name":dev_name,"dev_hid":dev_hid,"root":root}
+        return {"valid":True,"has_var":has_var,"sta":sta,"patches":patches,"device":dev,"dev_name":dev_name,"dev_hid":dev_hid,"root":root,"sta_type":sta_type}
 
     def ssdt_awac(self):
         if not self.ensure_dsdt():
@@ -1291,7 +1299,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
             macos,original = ("Zero","0x0F") if x.get("dev_hid") == "ACPI000E" else ("0x0F","Zero")
             if x.get("sta"):
                 ssdt += """    External ([[DevPath]], DeviceObj)
-    External ([[DevPath]].XSTA, MethodObj)
+    External ([[DevPath]].XSTA, [[sta_type]])
     Scope ([[DevPath]])
     {
         Name (ZSTA, [[Original]])
@@ -1304,12 +1312,12 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
             // Default to [[Original]] - but return the result of the renamed XSTA if possible
             If ((CondRefOf ([[DevPath]].XSTA)))
             {
-                Store ([[DevPath]].XSTA(), ZSTA)
+                Store ([[DevPath]].XSTA[[called]], ZSTA)
             }
             Return (ZSTA)
         }
     }
-""".replace("[[DevPath]]",x["device"][0]).replace("[[Original]]",original).replace("[[macOS]]",macos)
+""".replace("[[DevPath]]",x["device"][0]).replace("[[Original]]",original).replace("[[macOS]]",macos).replace("[[sta_type]]",x["sta_type"]).replace("[[called]]"," ()" if x["sta_type"]=="MethodObj" else "")
             elif x.get("dev_hid") == "ACPI000E":
                 # AWAC device with no STAS, and no _STA - let's just add one
                 ssdt += """    External ([[DevPath]], DeviceObj)
@@ -1953,7 +1961,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "ADROVER", 0x00000000)
                         ssdt += """
 
     External ([[device]], DeviceObj)
-    External ([[device]].XSTA, MethodObj)
+    External ([[device]].XSTA, [[sta_type]])
 
     Scope ([[device]])
     {
@@ -1967,11 +1975,11 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "ADROVER", 0x00000000)
             // Default to 0x0F - but return the result of the renamed XSTA if possible
             If ((CondRefOf ([[device]].XSTA)))
             {
-                Store ([[device]].XSTA(), ZSTA)
+                Store ([[device]].XSTA[[called]], ZSTA)
             }
             Return (ZSTA)
         }
-    }""".replace("[[device]]",d)
+    }""".replace("[[device]]",d).replace("[[sta_type]]",sta_check["sta_type"]).replace("[[called]]"," ()" if sta_check["sta_type"]=="MethodObj" else "")
                 ssdt += """
     /*
      * End copying here if you're adding this info to an existing SSDT-ADROVER!
