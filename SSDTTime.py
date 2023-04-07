@@ -1905,12 +1905,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             print("")
             self.u.grab("Press [enter] to return...")
             return
-        if match[2]:
-            print(" - No bridge needed!")
-            print("")
-            self.u.grab("Press [enter] to return...")
-            return
-        # We got a match - and need bridges
+        # We got a match
         print("Matched {} - {}".format(match[0],match[1]["path"]))
         # Check for the longest adj_path as well
         adj_match = self.get_all_matches(device_dict,test_path,adj=True)
@@ -1993,6 +1988,12 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "ADROVER", 0x00000000)
                 print("\n\u001b[41;1m!! WARNING !!\u001b[0m SSDT-ADROVER disables existing devices - VERIFY BEFORE USING!!\n")
             else:
                 print(" - Devices need to be adjusted for Bridging to work!")
+        if match[2]:
+            print(" - No bridge needed!")
+            if adj_match: self.patch_warn()
+            else: print("")
+            self.u.grab("Press [enter] to return...")
+            return
         remain = test_path[match[-1]+1:]
         print("Generating bridge{} for {}...".format(
             "" if not remain.count("/") else "s",
