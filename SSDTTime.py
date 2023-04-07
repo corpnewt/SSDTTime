@@ -1983,9 +1983,16 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "ADROVER", 0x00000000)
                 # Save the SSDT and generate any patches
                 print("Generating SSDT-ADROVER...")
                 self.write_ssdt("SSDT-ADROVER",ssdt)
-                oc = {"Comment":"Disables devices with _ADR overflow for bridging","Enabled":True,"Path":"SSDT-ADROVER.aml"}
-                self.make_plist(oc,"SSDT-ADROVER.aml",patches)
-                print("\n\u001b[41;1m!! WARNING !!\u001b[0m SSDT-ADROVER disables existing devices - VERIFY BEFORE USING!!\n")
+                oc = {"Comment":"Disables devices with _ADR overflow for bridging","Enabled":False,"Path":"SSDT-ADROVER.aml"}
+                # Iterate the patches and disable them by default while appending a warning to the comments
+                for patch in patches:
+                    patch["Enabled"] = False
+                    patch["Disabled"] = True
+                self.make_plist(oc,None,patches)
+                print("\n\u001b[41;1m!! WARNING !!\u001b[0m SSDT-ADROVER disables existing devices - VERIFY BEFORE ENABLING!!")
+                if patches:
+                    print("\u001b[41;1m!! WARNING !!\u001b[0m _STA to XSTA patches were added - VERIFY BEFORE ENABLING!!")
+                print("")
             else:
                 print(" - Devices need to be adjusted for Bridging to work!")
         if match[2]:
