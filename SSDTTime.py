@@ -1096,23 +1096,29 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         self.patch_warn()
         self.u.grab("Press [enter] to return...")
 
-    def get_sta_var(self,var="STAS",dev_hid="ACPI000E",dev_name="AWAC",log_locate=True):
+    def get_sta_var(self,var="STAS",device=None,dev_hid="ACPI000E",dev_name="AWAC",log_locate=True):
         # Helper to check for a device, check for (and qualify) an _STA method,
         # and look for a specific variable in the _STA scope
         #
         # Returns a dict with device info - only "valid" parameter is
         # guaranteed.
-        if log_locate: print("Locating {} ({}) devices...".format(dev_hid,dev_name))
-        dev_list = self.d.get_device_paths_with_hid(dev_hid)
         has_var = False
         patches = []
         root = None
-        if not len(dev_list):
-            if log_locate: print(" - Could not locate any {} devices".format(dev_hid))
-            return {"valid":False}
+        if device:
+            dev_list = self.d.get_device_paths(device)
+            if not len(dev_list):
+                if log_locate: print(" - Could not locate {}".format(device))
+                return {"value":False}
+        else:
+            if log_locate: print("Locating {} ({}) devices...".format(dev_hid,dev_name))
+            dev_list = self.d.get_device_paths_with_hid(dev_hid)
+            if not len(dev_list):
+                if log_locate: print(" - Could not locate any {} devices".format(dev_hid))
+                return {"valid":False}
         dev = dev_list[0]
-        root = dev[0].split(".")[0]
         if log_locate: print(" - Found {}".format(dev[0]))
+        root = dev[0].split(".")[0]
         print(" --> Verifying _STA...")
         sta  = self.d.get_method_paths(dev[0]+"._STA")
         xsta = self.d.get_method_paths(dev[0]+".XSTA")
@@ -1778,23 +1784,22 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                 new_path.append("Pci({},{})".format(self.hexy(adr1),self.hexy(adr2)))
         return "/".join(new_path)
 
-    def get_longest_match(self, device_dict, match_path):
-        longest = 0
+    def get_longest_match(self, device_dict, match_path, adj=False):
+        matches = self.get_all_matches(device_dict,match_path,adj=adj)
+        if not matches: return
+        return sorted(matches,key=lambda x:x[-1],reverse=True)[0]
+
+    def get_all_matches(self, device_dict, match_path, adj=False):
         matched = None
         exact   = False
+        key     = "adj_path" if adj else "path"
+        matches = []
         for d in device_dict:
-            device = device_dict[d].get("path","")
-            if not device: continue # Borked?
-            if match_path.lower().startswith(device_dict[d]["path"].lower()) and len(device_dict[d]["path"])>longest:
-                # Got a longer match - set it
-                matched = d
-                longest = len(device_dict[d]["path"])
-                # Check if it's an exact match, and bail early
-                if device_dict[d]["path"].lower() == match_path.lower():
-                    exact = True
-                    break
-        if not matched: return
-        return (matched,device_dict[matched],exact,longest)
+            device = device_dict[d].get(key)
+            if not device: continue
+            if match_path.lower().startswith(device.lower()):
+                matches.append((d,device_dict[d],device.lower()==match_path.lower(),len(device)))
+        return matches
 
     def get_device_path(self):
         while True:
@@ -1850,14 +1855,14 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             adr_overflow = False
             # Let's bitshift to get both addresses
             try:
-                adr2,adr1 = adr & 0xFFFF, adr >> 16 & 0xFFFF
-                radr2,radr1 = adr2,adr1 # Save placeholders in case we overflow
+                adr1,adr2 = adr >> 16 & 0xFFFF, adr & 0xFFFF
+                radr1,radr2 = adr1,adr2 # Save placeholders in case we overflow
                 if adr1 > 0xFF: # Overflowed
                     adr_overflow = True
-                    adr1 = 0
+                    radr1 = 0
                 if adr2 > 0xFF: # Overflowed
                     adr_overflow = True
-                    adr2 = 0
+                    radr2 = 0
             except:
                 continue # Bad address?
             # Let's check if our path already exists
@@ -1873,13 +1878,12 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             # Check if either we, or our parent has an adr overflow
             if adr_overflow or parent_device.get("adr_overflow"):
                 device_dict[path[0]]["adr_overflow"] = True
-                if adr_overflow: # It was us, not a parent - save the *real* addresses
-                    device_dict[path[0]]["real_path"] = device_path + "/Pci({},{})".format(self.hexy(radr1),self.hexy(radr2))
+                parent_path = parent_device.get("adj_path",parent_device["path"])
+                device_dict[path[0]]["adj_path"] = parent_path + "/Pci({},{})".format(self.hexy(radr1),self.hexy(radr2))
+                if adr_overflow: # It was us, not a parent
                     dev_overflow = device_dict[path[0]].get("dev_overflow",[])
                     dev_overflow.append(path[0])
                     device_dict[path[0]]["dev_overflow"] = dev_overflow
-                else: # It was a parent - keep appending our pathing to the real path
-                    device_dict[path[0]]["real_path"] = parent_device["real_path"] + "/Pci({},{})".format(self.hexy(adr1),self.hexy(adr2))
         print("Matching against {}".format(test_path))
         match = self.get_longest_match(device_dict,test_path)
         if not match:
@@ -1900,15 +1904,85 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             return
         # We got a match - and need bridges
         print("Matched {} - {}".format(match[0],match[1]["path"]))
-        if match[1].get("adr_overflow"):
-            print(" - \u001b[41;1m!! WARNING !!\u001b[0m There are _ADR overflows in the device path!")
-            if match[1].get("real_path"):
-                print(" - REAL path is:")
-                print("   {}".format(match[1]["real_path"]))
-            if match[1].get("dev_overflow"):
+        # Check for the longest adj_path as well
+        adj_match = self.get_all_matches(device_dict,test_path,adj=True)
+        if adj_match:
+            print("\nThere are _ADR overflows in the device path!")
+            # Get a list of devices to _STA = Zero
+            devices = []
+            for m in adj_match:
+                if not "dev_overflow" in m[1]: continue
+                devices.extend([x for x in m[1]["dev_overflow"] if not x in devices])
+            if devices:
                 print(" - The following devices need to be adjusted for Bridging to work:")
-                for d in match[1]["dev_overflow"]:
+                for d in devices:
                     print(" --> {}".format(d))
+                # Walk the paths and generate _STA returns to disable devices
+                print(" - Generating _STA renames as needed...")
+                patches = []
+                ssdt = """
+DefinitionBlock ("", "SSDT", 2, "CORP", "ADROVER", 0x00000000)
+{
+    /*
+     * Start copying here if you're adding this info to an existing SSDT-ADROVER!
+     */"""
+                for d in devices:
+                    sta_check = self.get_sta_var(var=None,device=d,dev_name=d.split(".")[-1])
+                    if not sta_check["valid"]: continue # Borked - skip
+                    patches.extend(sta_check.get("patches",[]))
+                    if not sta_check["sta"]: # No _STA method, override it
+                        ssdt += """
+
+    External ([[device]], DeviceObj)
+
+    Scope ([[device]])
+    {
+        Method (_STA, 0, NotSerialized)  // _STA: Status
+        {
+            If (_OSI ("Darwin"))
+            {
+                Return (Zero)
+            }
+            Else
+            {
+                Return (0x0F)
+            }
+        }
+    }""".replace("[[device]]",d)
+                    else: # Got an _STA method
+                        ssdt += """
+
+    External ([[device]], DeviceObj)
+    External ([[device]].XSTA, MethodObj)
+
+    Scope ([[device]])
+    {
+        Name (ZSTA, 0x0F)
+        Method (_STA, 0, NotSerialized)  // _STA: Status
+        {
+            If (_OSI ("Darwin"))
+            {
+                Return (Zero)
+            }
+            // Default to 0x0F - but return the result of the renamed XSTA if possible
+            If ((CondRefOf ([[device]].XSTA)))
+            {
+                Store ([[device]].XSTA(), ZSTA)
+            }
+            Return (ZSTA)
+        }
+    }""".replace("[[device]]",d)
+                ssdt += """
+    /*
+     * End copying here if you're adding this info to an existing SSDT-ADROVER!
+     */
+}"""
+                # Save the SSDT and generate any patches
+                print("Generating SSDT-ADROVER...")
+                self.write_ssdt("SSDT-ADROVER",ssdt)
+                oc = {"Comment":"Disables devices with _ADR overflow for bridging","Enabled":True,"Path":"SSDT-ADROVER.aml"}
+                self.make_plist(oc,"SSDT-ADROVER.aml",patches)
+                print("\n\u001b[41;1m!! WARNING !!\u001b[0m SSDT-ADROVER disables existing devices - VERIFY BEFORE USING!!\n")
             else:
                 print(" - Devices need to be adjusted for Bridging to work!")
         remain = test_path[match[-1]+1:]
@@ -1922,7 +1996,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             print("")
             self.u.grab("Press [enter] to return...")
             return
-        print("Generating SSDT...")
+        print("Generating SSDT-Bridge...")
 
         ssdt = """// Source and info from:
 // https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/Source/SSDT-BRG0.dsl
