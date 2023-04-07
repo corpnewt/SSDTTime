@@ -1782,13 +1782,15 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         longest = 0
         matched = None
         exact   = False
-        for device in device_dict:
-            if match_path.lower().startswith(device_dict[device].lower()) and len(device_dict[device])>longest:
+        for d in device_dict:
+            device = device_dict[d].get("path","")
+            if not device: continue # Borked?
+            if match_path.lower().startswith(device_dict[d]["path"].lower()) and len(device_dict[d]["path"])>longest:
                 # Got a longer match - set it
-                matched = device
-                longest = len(device_dict[device])
+                matched = d
+                longest = len(device_dict[d]["path"])
                 # Check if it's an exact match, and bail early
-                if device_dict[device].lower() == match_path.lower():
+                if device_dict[d]["path"].lower() == match_path.lower():
                     exact = True
                     break
         if not matched: return
@@ -1806,7 +1808,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             print("M. Main")
             print("Q. Quit")
             print(" ")
-            path = self.u.grab("Please enter the device path needing bridges:  ")
+            path = self.u.grab("Please enter the device path needing bridges:\n\n")
             if path.lower() == "m":
                 return
             if path.lower() == "q":
@@ -1838,28 +1840,46 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                 adr = self.get_address_from_line(device_uid[0][1],split_by="_UID, ")
             else: # Assume 0
                 adr = 0
-            device_dict[path[0]] = "PciRoot({})".format(self.hexy(adr))
+            device_dict[path[0]] = {"path":"PciRoot({})".format(self.hexy(adr))}
             pci_root_paths.append(device_dict[path[0]])
         # First - let's create a new list of tuples with the ._ADR stripped
         # The goal here is to ensure pathing is listed in the proper order.
         sanitized_paths = sorted([(x[0][0:-5],x[1],x[2]) for x in paths])
         for path in sanitized_paths:
             adr = self.get_address_from_line(path[1])
+            adr_overflow = False
             # Let's bitshift to get both addresses
             try:
                 adr2,adr1 = adr & 0xFFFF, adr >> 16 & 0xFFFF
+                radr2,radr1 = adr2,adr1 # Save placeholders in case we overflow
+                if adr1 > 0xFF: # Overflowed
+                    adr_overflow = True
+                    adr1 = 0
+                if adr2 > 0xFF: # Overflowed
+                    adr_overflow = True
+                    adr2 = 0
             except:
                 continue # Bad address?
             # Let's check if our path already exists
             if path[0] in device_dict: continue # Skip
             # Doesn't exist - let's see if the parent path does?
             parent = ".".join(path[0].split(".")[:-1])
-            if not parent in device_dict: continue # No parent either - bail...
+            parent_device = device_dict.get(parent)
+            if not parent_device or not parent_device.get("path"): continue # No parent either - bail...
             # Our parent path exists - let's copy its device_path, and append our addressing
-            device_path = device_dict[parent]
-            if not device_path: continue # Bail - no device_path set
+            device_path = parent_device["path"]
             device_path += "/Pci({},{})".format(self.hexy(adr1),self.hexy(adr2))
-            device_dict[path[0]] = device_path
+            device_dict[path[0]] = {"path":device_path}
+            # Check if either we, or our parent has an adr overflow
+            if adr_overflow or parent_device.get("adr_overflow"):
+                device_dict[path[0]]["adr_overflow"] = True
+                if adr_overflow: # It was us, not a parent - save the *real* addresses
+                    device_dict[path[0]]["real_path"] = device_path + "/Pci({},{})".format(self.hexy(radr1),self.hexy(radr2))
+                    dev_overflow = device_dict[path[0]].get("dev_overflow",[])
+                    dev_overflow.append(path[0])
+                    device_dict[path[0]]["dev_overflow"] = dev_overflow
+                else: # It was a parent - keep appending our pathing to the real path
+                    device_dict[path[0]]["real_path"] = parent_device["real_path"] + "/Pci({},{})".format(self.hexy(adr1),self.hexy(adr2))
         print("Matching against {}".format(test_path))
         match = self.get_longest_match(device_dict,test_path)
         if not match:
@@ -1879,7 +1899,18 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             self.u.grab("Press [enter] to return...")
             return
         # We got a match - and need bridges
-        print("Matched {} - {}".format(match[0],match[1]))
+        print("Matched {} - {}".format(match[0],match[1]["path"]))
+        if match[1].get("adr_overflow"):
+            print(" - \u001b[41;1m!! WARNING !!\u001b[0m There are _ADR overflows in the device path!")
+            if match[1].get("real_path"):
+                print(" - REAL path is:")
+                print("   {}".format(match[1]["real_path"]))
+            if match[1].get("dev_overflow"):
+                print(" - The following devices need to be adjusted for Bridging to work:")
+                for d in match[1]["dev_overflow"]:
+                    print(" --> {}".format(d))
+            else:
+                print(" - Devices need to be adjusted for Bridging to work!")
         remain = test_path[match[-1]+1:]
         print("Generating bridge{} for {}...".format(
             "" if not remain.count("/") else "s",
