@@ -1984,7 +1984,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "ADROVER", 0x00000000)
                 print("Generating SSDT-ADROVER...")
                 self.write_ssdt("SSDT-ADROVER",ssdt)
                 oc = {"Comment":"Disables devices with _ADR overflow for bridging","Enabled":False,"Path":"SSDT-ADROVER.aml"}
-                # Iterate the patches and disable them by default while appending a warning to the comments
+                # Iterate the patches and disable them by default
                 for patch in patches:
                     patch["Enabled"] = False
                     patch["Disabled"] = True
