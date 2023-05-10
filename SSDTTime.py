@@ -1190,44 +1190,51 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
             if rtc_crs:
                 print(" ----> {}".format(rtc_crs[0][0]))
                 rtc_crs_type = "MethodObj" if rtc_crs[0][-1] == "Method" else "BuffObj"
-                print(" --> Checking RTC range...")
-                last_adr = last_len = last_ind = None
-                crs_scope = self.d.get_scope(rtc_crs[0][1])
-                # Let's try and clean up the scope - it's often a jumbled mess
-                pad_len = len(crs_scope[0])-len(crs_scope[0].lstrip())
-                pad = crs_scope[0][:pad_len]
-                fixed_scope = []
-                for line in crs_scope:
-                    if line.startswith(pad): # Got a full line - strip the pad, and save it
-                        fixed_scope.append(line[pad_len:])
-                    else: # Likely a part of the prior line
-                        fixed_scope[-1] = fixed_scope[-1]+line
-                for i,line in enumerate(fixed_scope):
-                    if "IO (Decode16," in line:
-                        # We have our start - get the the next line, and 4th line
-                        try:
-                            curr_adr = int(fixed_scope[i+1].strip().split(",")[0],16)
-                            curr_len = int(fixed_scope[i+4].strip().split(",")[0],16)
-                            curr_ind = i+4 # Save the value we may pad
-                        except: # Bad values? Bail...
-                            print(" ----> Failed to gather values - could not verify RTC range.")
-                            rtc_range_needed = False
-                            break
-                        if last_adr is not None: # Compare our range values
-                            adjust = curr_adr - (last_adr + last_len)
-                            if adjust: # We need to increment the previous length by our adjust value
-                                rtc_range_needed = True
-                                print(" ----> Adjusting IO range {} length to {}".format(self.hexy(last_adr,pad_to=4),self.hexy(last_len+adjust,pad_to=2)))
-                                try:
-                                    hex_find,hex_repl = self.hexy(last_len,pad_to=2),self.hexy(last_len+adjust,pad_to=2)
-                                    crs_lines[last_ind] = crs_lines[last_ind].replace(hex_find,hex_repl)
-                                except:
-                                    print(" ----> Failed to adjust values - could not verify RTC range.")
-                                    rtc_range_needed = False
-                                    break
-                        # Save our last values
-                        last_adr,last_len,last_ind = curr_adr,curr_len,curr_ind
-                    crs_lines.append(line)
+                # Only check for the range if it's a buffobj
+                if not rtc_crs_type.lower() == "buffobj":
+                    print(" --> _CRS is a Method - cannot verify RTC range!")
+                else:
+                    print(" --> _CRS is a Buffer - checking RTC range...")
+                    last_adr = last_len = last_ind = None
+                    crs_scope = self.d.get_scope(rtc_crs[0][1])
+                    # Let's try and clean up the scope - it's often a jumbled mess
+                    pad_len = len(crs_scope[0])-len(crs_scope[0].lstrip())
+                    pad = crs_scope[0][:pad_len]
+                    fixed_scope = []
+                    for line in crs_scope:
+                        if line.startswith(pad): # Got a full line - strip the pad, and save it
+                            fixed_scope.append(line[pad_len:])
+                        else: # Likely a part of the prior line
+                            fixed_scope[-1] = fixed_scope[-1]+line
+                    for i,line in enumerate(fixed_scope):
+                        if "Name (_CRS, " in line:
+                            # Rename _CRS to BUFX for later - and strip any comments to avoid confusion
+                            line = line.replace("Name (_CRS, ","Name (BUFX, ").split("  //")[0]
+                        if "IO (Decode16," in line:
+                            # We have our start - get the the next line, and 4th line
+                            try:
+                                curr_adr = int(fixed_scope[i+1].strip().split(",")[0],16)
+                                curr_len = int(fixed_scope[i+4].strip().split(",")[0],16)
+                                curr_ind = i+4 # Save the value we may pad
+                            except: # Bad values? Bail...
+                                print(" ----> Failed to gather values - could not verify RTC range.")
+                                rtc_range_needed = False
+                                break
+                            if last_adr is not None: # Compare our range values
+                                adjust = curr_adr - (last_adr + last_len)
+                                if adjust: # We need to increment the previous length by our adjust value
+                                    rtc_range_needed = True
+                                    print(" ----> Adjusting IO range {} length to {}".format(self.hexy(last_adr,pad_to=4),self.hexy(last_len+adjust,pad_to=2)))
+                                    try:
+                                        hex_find,hex_repl = self.hexy(last_len,pad_to=2),self.hexy(last_len+adjust,pad_to=2)
+                                        crs_lines[last_ind] = crs_lines[last_ind].replace(hex_find,hex_repl)
+                                    except:
+                                        print(" ----> Failed to adjust values - could not verify RTC range.")
+                                        rtc_range_needed = False
+                                        break
+                            # Save our last values
+                            last_adr,last_len,last_ind = curr_adr,curr_len,curr_ind
+                        crs_lines.append(line)
                 if rtc_range_needed: # We need to generate a rename for _CRS -> XCRS
                     print(" --> Generating _CRS to XCRS rename...")
                     crs_index = self.d.find_next_hex(rtc_crs[0][1])[1]
@@ -1337,30 +1344,32 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
     }
 """.replace("[[DevPath]]",x["device"][0])
         # Check if we need to setup an RTC range correction
-        if rtc_range_needed and rtc_crs_type and crs_lines and rtc_dict.get("valid"):
+        if rtc_range_needed and rtc_crs_type.lower() == "buffobj" and crs_lines and rtc_dict.get("valid"):
             ssdt += """    External ([[DevPath]], DeviceObj)
     External ([[DevPath]].XCRS, [[type]])
     Scope ([[DevPath]])
     {
-        If (_OSI ("Darwin"))
-        {
-            // Adjusted _CRS method ripped from DSDT with corrected range
+        // Adjusted and renamed _CRS buffer ripped from DSDT with corrected range
 [[NewCRS]]
-            // End of adjusted _CRS method
-        }
-        ElseIf ((CondRefOf ([[DevPath]].XCRS)))
+        // End of adjusted _CRS and renamed buffer
+
+        // Create a new _CRS method that returns the result of the renamed XCRS
+        Method (_CRS, 0, Serialized)  // _CRS: Current Resource Settings
         {
-            // Create a new _CRS method that returns the result of the renamed XCRS
-            Method (_CRS, 0, Serialized)  // _CRS: Current Resource Settings
+            If (_OSI ("Darwin") || !CondRefOf ([[DevPath]].XCRS))
             {
-                Return ([[DevPath]].XCRS[[method]])
+                // Return our buffer if booting macOS or the XCRS method
+                // no longer exists for some reason
+                Return (BUFX)
             }
+            // Not macOS and XCRS exists - return its result
+            Return ([[DevPath]].XCRS[[method]])
         }
     }
 """.replace("[[DevPath]]",rtc_dict["device"][0]) \
     .replace("[[type]]",rtc_crs_type) \
     .replace("[[method]]"," ()" if rtc_crs_type == "Method" else "") \
-    .replace("[[NewCRS]]","\n".join([(" "*12)+x for x in crs_lines]))
+    .replace("[[NewCRS]]","\n".join([(" "*8)+x for x in crs_lines]))
         # Check if we do not have an RTC device at all
         if not rtc_dict.get("valid") and lpc_name:
             ssdt += """    External ([[LPCName]], DeviceObj)    // (from opcode)
