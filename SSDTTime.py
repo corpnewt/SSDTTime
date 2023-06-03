@@ -62,6 +62,12 @@ class SSDT:
                 "Comment" :"GPP7.UP00 to UPXX to fix Gigabyte's Mistake",
                 "Find"    :"1047052F035F53425F50434930475050375B82450455503030",
                 "Replace" :"1047052F035F53425F50434930475050375B82450455505858"
+            },
+            {
+                "PrePatch":"GPP6 duplicate _PRW methods",
+                "Comment" :"GPP6._PRW to XPRW to fix ASRock's Mistake",
+                "Find"    :"47505036085F4144520C04000200140F5F505257",
+                "Replace" :"47505036085F4144520C04000200140F58505257"
             }
         )
 
