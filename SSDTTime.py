@@ -2072,61 +2072,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
 
     def ssdt_pnlf(self):
         if not self.ensure_dsdt(): return
-        self.u.head("Generating PNLF")
-        print("")
-        print("Gathering ACPI devices...")
-        # Let's our device _ADR entries, and find the iGPU - which
-        # is *always* at 0x00020000 on Intel machines.
-        # Some do not have them defined in the DSDT though - so we'll
-        # also search for common names (GFX0, IGPU, VID, VID0, VID1)
-        # under the PCI roots as well.
-        igpu = None
-        guessed = False
-        paths = self.d.get_path_of_type(obj_type="Name",obj="_ADR")
-        print("Looking for iGPU device at 0x00020000...")
-        for path in paths:
-            adr = self.get_address_from_line(path[1])
-            if adr == 0x00020000:
-                igpu = path[0][:-5]
-                print(" - Found at {}".format(igpu))
-                break
-        if not igpu: # Try matching by name
-            print(" - Not found!")
-            print("Searching common iGPU names...")
-            pci_roots = self.d.get_device_paths_with_hid(hid="PNP0A08")
-            pci_roots += self.d.get_device_paths_with_hid(hid="PNP0A03")
-            pci_roots += self.d.get_device_paths_with_hid(hid="ACPI0016")
-            external = []
-            for line in self.d.dsdt_lines:
-                if not line.strip().startswith("External ("): continue # We don't need it
-                try:
-                    path = line.split("(")[1].split(", ")[0]
-                    # Prepend the backslash and ensure trailing underscores are stripped.
-                    path = "\\"+".".join([x.rstrip("_").replace("\\","") for x in path.split(".")])
-                    external.append(path)
-                except: pass
-            for root in pci_roots:
-                for name in ("IGPU","_VID","VID0","VID1","GFX0","VGA","_VGA"):
-                    test_path = "{}.{}".format(root[0],name)
-                    device = self.d.get_device_paths(test_path)
-                    if device: device = device[0][0] # Unpack to the path
-                    else:
-                        # Walk the external paths and see if it's declared elsewhere?
-                        # We're not patching anything directly - just getting a pathing
-                        # reference, so it's fine to not have the surrounding code.
-                        device = next((x for x in external if test_path == x),None)
-                    if not device: continue # Not found :(
-                    # Got a device - see if it has an _ADR, and skip if so - as it was wrong in the prior loop
-                    if self.d.get_path_of_type(obj_type="Name",obj=device+"._ADR"): continue
-                    # At this point - we got a hit
-                    igpu = device
-                    print(" - Found likely iGPU device at {}".format(igpu))
-        if not igpu:
-            guessed = True
-            print(" - Could not locate an iGPU device!")
-            igpu = (pci_roots[0][0] if pci_roots else "\\_SB.PCI0")+".GFX0"
-            print(" - Falling back on {}".format(igpu))
-        # Now we need to get our _UID
+        # Let's get our _UID
         while True:
             self.u.head("Select _UID for PNLF")
             print("")
@@ -2166,21 +2112,14 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         self.u.head("Generating PNLF")
         print("")
         print("Creating SSDT-PNLF...")
-        print(" - Path: {}".format(igpu))
         print(" - _UID: {}".format(uid))
-        if guessed:
-            print("")
-            print("!!WARNING!!  THIS PATH WAS GUESSED AND MAY NOT BE CORRECT!")
-            print("")
         patches = []
         if "PNLF" in self.d.dsdt:
             print("PNLF detected in DSDT - generating rename...")
             patches.append({"Comment":"PNLF to XNLF Rename","Find":"504E4C46","Replace":"584E4C46"})
         ssdt = """DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
 {
-    External ([[igpu_path]], DeviceObj)
-
-    Device ([[igpu_path]].PNLF)
+    Device (PNLF)
     {
         Name (_HID, EisaId ("APP0002"))  // _HID: Hardware ID
         Name (_CID, "backlight")  // _CID: Compatible ID
@@ -2209,7 +2148,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
             }
         }
     }
-}""".replace("[[igpu_path]]",igpu).replace("[[uid_value]]",self.hexy(uid)).replace("[[uid_dec]]",str(uid))
+}""".replace("[[uid_value]]",self.hexy(uid)).replace("[[uid_dec]]",str(uid))
         self.write_ssdt("SSDT-PNLF",ssdt)
         oc = {
             "Comment":"Defines PNLF device with a _UID of {} for backlight control{}".format(
