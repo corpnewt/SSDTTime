@@ -2083,7 +2083,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
             print(" 16  | Skylake/Kaby Lake, some Haswell | 0x056C")
             print(" 17  | Custom LMAX                     | 0x07A1")
             print(" 18  | Custom LMAX                     | 0x1499")
-            print(" 19  | CoffeeLake and newer            | 0xFFFF")
+            print(" 19  | CoffeeLake and newer (or AMD)   | 0xFFFF")
             print(" 99  | Other (requires custom applbkl-name/applbkl-data dev props)")
             print("")
             print("The _UID tells WhateverGreen what backlight data to use.")
@@ -2131,7 +2131,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         //  16  | Skylake/Kaby Lake, some Haswell | 0x056C
         //  17  | Custom LMAX                     | 0x07A1
         //  18  | Custom LMAX                     | 0x1499
-        //  19  | CoffeeLake and newer            | 0xFFFF
+        //  19  | CoffeeLake and newer (or AMD)   | 0xFFFF
         //  99  | Other (requires custom applbkl-name/applbkl-data dev props)
 
         Name (_UID, [[uid_value]])  // _UID: Unique ID: [[uid_dec]]
