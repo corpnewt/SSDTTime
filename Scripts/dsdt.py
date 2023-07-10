@@ -8,8 +8,8 @@ class DSDT:
         self.u    = utils.Utils("SSDT Time")
         self.iasl_url_macOS = "https://raw.githubusercontent.com/acidanthera/MaciASL/master/Dist/iasl-stable"
         self.iasl_url_linux = "https://raw.githubusercontent.com/corpnewt/linux_iasl/main/iasl.zip"
-        self.iasl_url_windows = "https://acpica.org/sites/acpica/files/iasl-win-20200528.zip"
-        self.acpi_binary_tools = "https://www.acpica.org/downloads/binary-tools"
+        self.acpi_binary_tools = "https://www.intel.com/content/www/us/en/developer/topic-technology/open/acpica/download.html"
+        self.h = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         self.iasl = self.check_iasl()
         if not self.iasl:
             raise Exception("Could not locate or download iasl!")
@@ -33,9 +33,6 @@ class DSDT:
             else:
                 print("No DSDT.aml in folder.")
                 return False
-        #elif os.path.basename(dsdt).lower() != "dsdt.aml":
-        #    print("Name is not DSDT.aml.")
-        #    return False
         temp = tempfile.mkdtemp()
         try:
             if got_origin:
@@ -82,15 +79,22 @@ class DSDT:
         return ret
 
     def get_latest_iasl(self):
-        # Helper to scrape https://www.acpica.org/downloads/binary-tools for the latest
-        # iasl zip
+        # Helper to scrape https://www.intel.com/content/www/us/en/developer/topic-technology/open/acpica/download.html for the latest
+        # download binaries link - then scrape the contents of that page for the actual download
         try:
-            source = self.dl.get_string(self.acpi_binary_tools)
-            # acpica.org seems to muck up their links from time to time - let's try to get the first
-            # windows attachment that *isn't* the hyperlink in the landing page.
+            source = self.dl.get_string(self.acpi_binary_tools, headers=self.h)
             for line in source.split("\n"):
-                if "/iasl-win-" in line and ".zip" in line and not '">iASL compiler and Windows ACPI tools' in line:
-                    return line.split('<a href="')[1].split('"')[0]
+                # <a href="/content/www/us/en/download/774881/acpi-component-architecture-downloads-windows-binary-tools.html">iASL Compiler and Windows ACPI Tools
+                if "windows-binary-tools" in line and ">iasl compiler and windows acpi tools" in line.lower():
+                    # Try to scrape and load the next page
+                    try:
+                        dl_page_url = "https://www.intel.com" + line.split('<a href="')[1].split('"')[0]
+                        dl_page_source = self.dl.get_string(dl_page_url, headers=self.h)
+                        for line in dl_page_source.split("\n"):
+                            if '"download-button"' in line: # Should have the right line
+                                return line.split('data-href="')[1].split('"')[0]
+                    except:
+                        return None
         except: pass
         return None
     
@@ -131,7 +135,7 @@ class DSDT:
         ztemp = tempfile.mkdtemp(dir=temp)
         zfile = os.path.basename(url)
         print("Downloading {}".format(os.path.basename(url)))
-        self.dl.stream_to_file(url, os.path.join(ztemp,zfile), False)
+        self.dl.stream_to_file(url, os.path.join(ztemp,zfile), progress=False, headers=self.h)
         search_dir = ztemp
         if zfile.lower().endswith(".zip"):
             print(" - Extracting")
