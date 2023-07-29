@@ -1911,10 +1911,10 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         match = self.get_longest_match(device_dict,test_path)
         if not match:
             if pci_root_paths:
-                print(" - No matches found!  Your device path must at least start with one")
-                print("   of the following PciRoot() options to match the passed DSDT:")
+                print(" - No matches found!  Your device path must start with one of the")
+                print("   following PciRoot() options to match the passed DSDT:")
                 for p in pci_root_paths:
-                    print("   --> {}".format(p))
+                    print("   --> {}".format(p.get("path",p)))
             else:
                 print(" - No matches found!  Please re-check your device path.")
             print("")
