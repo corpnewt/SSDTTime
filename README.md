@@ -24,6 +24,8 @@ Supports macOS, Linux and Windows
     - Sets up a PNLF device for laptop backlight control
 - SSDT-XOSI
     - _OSI rename and patch to return true for a range of Windows versions - also checks for OSID
+- DMAR
+    - Remove Reserved Memory Regions from the DMAR table
     
 Additionally on Linux and Windows the tool can be used to dump the system DSDT.
 
