@@ -2265,19 +2265,22 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
             if not region_count:
                 # None found
                 print("No Reserved Memory Regions found - DMAR does not need patching.")
-            else:
-                print("Located {:,} Reserved Memory Region{} - generating new table...".format(region_count,"" if region_count==1 else "s"))
-                self.write_ssdt("DMAR","\n".join(new_dmar).strip())
-                oc = {
-                    "Comment":"Replacement DMAR table with Reserved Memory Regions stripped - requires DMAR table be dropped",
-                    "Enabled":True,
-                    "Path":"DMAR.aml"
-                }
-                drop = ({
-                    "Comment":"Drop DMAR Table",
-                    "Signature":"DMAR"
-                },)
-                self.make_plist(oc, "DMAR.aml", (), drops=drop)
+                print("")
+                self.u.grab("Press [enter] to return to main menu...")
+                return
+            # We removed some regions
+            print("Located {:,} Reserved Memory Region{} - generating new table...".format(region_count,"" if region_count==1 else "s"))
+            self.write_ssdt("DMAR","\n".join(new_dmar).strip())
+            oc = {
+                "Comment":"Replacement DMAR table with Reserved Memory Regions stripped - requires DMAR table be dropped",
+                "Enabled":True,
+                "Path":"DMAR.aml"
+            }
+            drop = ({
+                "Comment":"Drop DMAR Table",
+                "Signature":"DMAR"
+            },)
+            self.make_plist(oc, "DMAR.aml", (), drops=drop)
             print("")
             print("Done.")
             self.patch_warn()
