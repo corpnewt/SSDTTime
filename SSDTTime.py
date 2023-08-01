@@ -193,7 +193,7 @@ class SSDT:
             last = last[path]
         return plist_data
     
-    def make_plist(self, oc_acpi, cl_acpi, patches, replace=False):
+    def make_plist(self, oc_acpi, cl_acpi, patches, drops=[], replace=False):
         # if not len(patches): return # No patches to add - bail
         repeat = False
         print("Building patches_OC and patches_Clover plists...")
@@ -204,7 +204,7 @@ class SSDT:
         # Check for the plists
         if os.path.isfile(os.path.join(output,"patches_OC.plist")): 
             e = os.path.join(output,"patches_OC.plist")
-            with open(e, "rb") as f:
+            with open(e,"rb") as f:
                 oc_plist = plist.load(f)
         if os.path.isfile(os.path.join(output,"patches_Clover.plist")): 
             e = os.path.join(output,"patches_Clover.plist")
@@ -217,6 +217,9 @@ class SSDT:
         if patches:
             oc_plist = self.ensure_path(oc_plist,("ACPI","Patch"))
             cl_plist = self.ensure_path(cl_plist,("ACPI","DSDT","Patches"))
+        if drops:
+            oc_plist = self.ensure_path(oc_plist,("ACPI","Delete"))
+            cl_plist = self.ensure_path(cl_plist,("ACPI","DropTables"))
 
         # Add the .aml references
         if replace: # Remove any conflicting entries
@@ -251,7 +254,27 @@ class SSDT:
                 print(" -> Patch \"{}\" already in Clover plist!".format(p["Comment"]))
             else:
                 print(" -> Adding Patch \"{}\" to Clover plist!".format(p["Comment"]))
-                cl_plist["ACPI"]["DSDT"]["Patches"].append(cp)         
+                cl_plist["ACPI"]["DSDT"]["Patches"].append(cp)
+
+        # Iterate any dropped tables
+        for d in drops:
+            ocd = self.get_oc_drop(d)
+            cd  = self.get_clover_drop(d)
+            if replace:
+                oc_plist["ACPI"]["Delete"] = [x for x in oc_plist["ACPI"]["Delete"] if ocd["TableSignature"] != x["TableSignature"] and ocd["OemTableId"] != x["OemTableId"]]
+                cl_plist["ACPI"]["DropTables"] = [x for x in cl_plist["ACPI"]["DropTables"] if cd.get("Signature") != x.get("Signature") and cd.get("TableId") != x.get("TableId")]
+            if any(x["TableSignature"] == ocd["TableSignature"] and x["OemTableId"] == ocd["OemTableId"] for x in oc_plist["ACPI"]["Delete"]):
+                print(" -> \"{}\" already in OC plist!".format(d["Comment"]))
+            else:
+                print(" -> Adding \"{}\" to OC plist!".format(d["Comment"]))
+                oc_plist["ACPI"]["Delete"].append(ocd)
+            name = " - ".join([x for x in (cd.get("Signature",""),cd.get("TableId","")) if x])
+            if any(x.get("Signature") == cd.get("Signature") and x.get("TableId") == cd.get("TableId") for x in cl_plist["ACPI"]["DropTables"]):
+                print(" -> \"{}\" already in Clover plist!".format(name or "Unknown Dropped Table"))
+            else:
+                cl_plist["ACPI"]["DropTables"].append(cd)
+                print(" -> Adding \"{}\" to Clover plist!".format(name or "Unknown Dropped Table"))
+
         # Write the plists if we have something to write
         if oc_plist:
             with open(os.path.join(output,"patches_OC.plist"),"wb") as f:
@@ -644,30 +667,52 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
 
     def get_clover_patch(self, patch):
         return {
-            "Comment": patch["Comment"],
+            "Comment":  patch["Comment"],
             "Disabled": patch.get("Disabled",False),
-            "Find": self.get_data(self.d.get_hex_bytes(patch["Find"])),
-            "Replace": self.get_data(self.d.get_hex_bytes(patch["Replace"]))
+            "Find":     self.get_data(self.d.get_hex_bytes(patch["Find"])),
+            "Replace":  self.get_data(self.d.get_hex_bytes(patch["Replace"]))
         }
 
     def get_oc_patch(self, patch):
         zero = self.get_data(self.d.get_hex_bytes("00000000"))
         return {
-            "Base": "",
-            "BaseSkip": 0,
-            "Comment": patch["Comment"],
-            "Count": 0,
-            "Enabled": patch.get("Enabled",True),
-            "Find": self.get_data(self.d.get_hex_bytes(patch["Find"])),
-            "Limit": 0,
-            "Mask": self.get_data(b""),
-            "OemTableId": zero,
-            "Replace": self.get_data(self.d.get_hex_bytes(patch["Replace"])),
-            "ReplaceMask": self.get_data(b""),
-            "Skip": 0,
-            "TableLength": 0,
+            "Base":           "",
+            "BaseSkip":       0,
+            "Comment":        patch["Comment"],
+            "Count":          0,
+            "Enabled":        patch.get("Enabled",True),
+            "Find":           self.get_data(self.d.get_hex_bytes(patch["Find"])),
+            "Limit":          0,
+            "Mask":           self.get_data(b""),
+            "OemTableId":     zero,
+            "Replace":        self.get_data(self.d.get_hex_bytes(patch["Replace"])),
+            "ReplaceMask":    self.get_data(b""),
+            "Skip":           0,
+            "TableLength":    0,
             "TableSignature": zero
         }
+
+    def get_oc_drop(self, drop):
+        zero = self.get_data(self.d.get_hex_bytes("00000000"))
+        # We need to convert the table id and signature to data
+        t_id = drop.get("TableId")
+        t_id = self.get_data(t_id.encode()) if t_id else zero
+        sig  = self.get_data((drop.get("Signature") or "SSDT").encode())
+        return {
+            "All":            drop.get("All",False),
+            "Comment":        drop["Comment"],
+            "Enabled":        drop.get("Enabled",True),
+            "OemTableId":     t_id,
+            "TableLength":    drop.get("Length",0),
+            "TableSignature": sig
+        }
+
+    def get_clover_drop(self, drop):
+        d = {}
+        for x in ("Signature","TableId","Length"):
+            if x in drop:
+                d[x] = drop[x]
+        return d
 
     def get_irq_choice(self, irqs):
         hid_pad = max((len(irqs[x].get("hid","")) for x in irqs))
@@ -2165,6 +2210,80 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         self.u.grab("Press [enter] to return...")
         return
 
+    def fix_dmar(self):
+        d = dsdt.DSDT() # Create a new instance just for this
+        while True:
+            self.u.head("Select DMAR Table")
+            print(" ")
+            print("M. Main")
+            print("Q. Quit")
+            print(" ")
+            dmar = self.u.grab("Please drag and drop a DMAR.aml table here:  ")
+            if dmar.lower() == "m":
+                return
+            if dmar.lower() == "q":
+                self.u.custom_quit()
+            out = self.u.check_path(dmar)
+            if not out: continue
+            # Got a DMAR table, try to load it
+            self.u.head("Patching DMAR")
+            print("")
+            print("Loading {}...".format(os.path.basename(out)))
+            dmar_table = d.load(out)
+            if not dmar_table:
+                self.u.head("Decompile Failure")
+                print("")
+                print("Could not decompile that table!")
+                print("")
+                self.u.grab("Press [enter] to return...")
+                continue
+            print("Verifying signature...")
+            reserved = got_sig = False
+            new_dmar = ["// DMAR table with Reserved Memory Regions stripped\n"]
+            region_count = 0
+            for line in d.dsdt_lines:
+                if 'Signature : "DMAR"' in line:
+                    got_sig = True
+                    print("Checking for Reserved Memory Regions...")
+                if not got_sig: continue # Skip until we find the signature
+                # If we find a reserved memory region, toggle our indicator
+                if "Subtable Type : 0001 [Reserved Memory Region]" in line:
+                    region_count += 1
+                    reserved = True
+                # Check for a non-reserved memory region subtable type
+                elif "Subtable Type : " in line:
+                    reserved = False
+                # Only append if we're not in a reserved memory region
+                if not reserved:
+                    new_dmar.append(line)
+            if not got_sig:
+                print(" - Not found, does not appear to be a valid DMAR table.")
+                print("")
+                self.u.grab("Press [enter] to return...")
+                continue
+            # Give the user some feedback
+            if not region_count:
+                # None found
+                print("No Reserved Memory Regions found - DMAR does not need patching.")
+            else:
+                print("Located {:,} Reserved Memory Region{} - generating new table...".format(region_count,"" if region_count==1 else "s"))
+                self.write_ssdt("DMAR","\n".join(new_dmar).strip())
+                oc = {
+                    "Comment":"Replacement DMAR table with Reserved Memory Regions stripped - requires DMAR table be dropped",
+                    "Enabled":True,
+                    "Path":"DMAR.aml"
+                }
+                drop = ({
+                    "Comment":"Drop DMAR Table",
+                    "Signature":"DMAR"
+                },)
+                self.make_plist(oc, "DMAR.aml", (), drops=drop)
+            print("")
+            print("Done.")
+            self.patch_warn()
+            self.u.grab("Press [enter] to return...")
+            return
+
     def main(self):
         self.u.resize(self.w,self.h)
         cwd = os.getcwd()
@@ -2184,6 +2303,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         print("0. PNLF          - Sets up a PNLF device for laptop backlight control")
         print("A. XOSI          - _OSI rename and patch to return true for a range of Windows")
         print("                   versions - also checks for OSID")
+        print("B. Fix DMAR      - Remove Reserved Memory Regions from the DMAR table")
         print("")
         if sys.platform.startswith("linux") or sys.platform == "win32":
             print("P. Dump DSDT     - Automatically dump the system DSDT")
@@ -2220,6 +2340,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
             self.ssdt_pnlf()
         elif menu.lower() == "a":
             self.ssdt_xosi()
+        elif menu.lower() == "b":
+            self.fix_dmar()
         elif menu.lower() == "p" and (sys.platform.startswith("linux") or sys.platform == "win32"):
             self.dsdt = self.load_dsdt(
                 self.d.dump_dsdt(
