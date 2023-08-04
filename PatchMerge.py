@@ -59,17 +59,23 @@ class PatchMerge:
         if self.config_type == "OpenCore":
             print(" - ACPI -> Add...")
             config_data = self.ensure_path(config_data,("ACPI","Add"))
+            print(" - ACPI -> Delete...")
+            config_data = self.ensure_path(config_data,("ACPI","Delete"))
             print(" - ACPI -> Patch...")
             config_data = self.ensure_path(config_data,("ACPI","Patch"))
         else:
+            print(" - ACPI -> DropTables")
+            config_data = self.ensure_path(config_data,("ACPI","DropTables"))
             print(" - ACPI -> SortedOrder...")
             config_data = self.ensure_path(config_data,("ACPI","SortedOrder"))
             print(" - ACPI -> DSDT -> Patches...")
             config_data = self.ensure_path(config_data,("ACPI","DSDT","Patches"))
         ssdts = target_data.get("ACPI",{}).get("Add",[]) if self.config_type == "OpenCore" else target_data.get("ACPI",{}).get("SortedOrder",[])
         patch = target_data.get("ACPI",{}).get("Patch",[]) if self.config_type == "OpenCore" else target_data.get("ACPI",{}).get("DSDT",{}).get("Patches",[])
+        drops = target_data.get("ACPI",{}).get("Delete",[]) if self.config_type == "OpenCore" else target_data.get("ACPI",{}).get("DropTables",[])
         s_orig = config_data["ACPI"]["Add"] if self.config_type == "OpenCore" else config_data["ACPI"]["SortedOrder"]
         p_orig = config_data["ACPI"]["Patch"] if self.config_type == "OpenCore" else config_data["ACPI"]["DSDT"]["Patches"]
+        d_orig = config_data["ACPI"]["Delete"] if self.config_type == "OpenCore" else config_data["ACPI"]["DropTables"]
         print("")
         if not ssdts:
             print("--- No SSDTs to add - skipping...")
@@ -116,6 +122,31 @@ class PatchMerge:
             print(" - Adding {:,} patch{}...".format(len(patch),"" if len(patch)==1 else "es"))
             p_orig.extend(patch)
         print("")
+        if not drops:
+            print("--- No tables to drop - skipping...")
+        else:
+            print("--- Walking target tables to drop ({:,} total)...".format(len(drops)))
+            d_rem = []
+            for d in drops:
+                if self.config_type == "OpenCore":
+                    print(" - Checking {}...".format(d["Comment"]))
+                    existing = [x for x in d_orig if x["TableSignature"] == d["TableSignature"] and x["OemTableId"] == d["OemTableId"]]
+                else:
+                    name = " - ".join([x for x in (d.get("Signature",""),d.get("TableId","")) if x]) or "Unknown Dropped Table"
+                    print(" - Checking {}...".format(name))
+                    existing = [x for x in d_orig if x.get("Signature") == d.get("Signature") and x.get("TableId") == d.get("TableId")]
+                if existing:
+                    print(" --> Located {:,} existing to replace...".format(len(existing)))
+                    d_rem.extend(existing)
+            if d_rem:
+                print(" - Removing {:,} existing duplicate{}...".format(len(d_rem),"" if len(d_rem)==1 else "s"))
+                for r in d_rem:
+                    if r in d_orig: d_orig.remove(r)
+            else:
+                print(" - No duplicates to remove...")
+            print(" - Dropping {:,} table{}...".format(len(drops),"" if len(drops)==1 else "s"))
+            d_orig.extend(drops)
+        print("")
         output_path = os.path.join(self.output,os.path.basename(self.config_path))
         print("Saving to {}...".format(output_path))
         if os.path.isfile(output_path):
@@ -129,6 +160,8 @@ class PatchMerge:
             self.u.grab("Press [enter] to return...")
             return
         print(" - Saved.")
+        print("")
+        print("!! Make sure you review the saved {} before replacing !!".format(os.path.basename(self.config_path)))
         print("")
         print("Done.")
         print("")
