@@ -297,6 +297,7 @@ class SSDT:
         print("Locating PNP0C09 (EC) devices...")
         ec_list = self.d.get_device_paths_with_hid("PNP0C09")
         ec_to_patch  = []
+        ec_sta = {}
         patches = []
         lpc_name = None
         if len(ec_list):
@@ -304,7 +305,7 @@ class SSDT:
             print(" - Got {}".format(len(ec_list)))
             print(" - Validating...")
             for x in ec_list:
-                device = x[0]
+                device = orig_device = x[0]
                 print(" --> {}".format(device))
                 if device.split(".")[-1] == "EC":
                     if laptop:
@@ -319,10 +320,10 @@ class SSDT:
                 # We need to check for _HID, _CRS, and _GPE
                 if all((y in scope for y in ["_HID","_CRS","_GPE"])):
                     print(" ----> Valid EC Device")
-                    sta = self.d.get_method_paths(device+"._STA")
-                    if len(sta):
-                        print(" ----> Contains _STA method. Skipping")
-                        continue
+                    sta = self.get_sta_var(var=None,device=orig_device,dev_hid="PNP0C09",dev_name=orig_device.split(".")[-1],log_locate=False)
+                    if sta.get("patches"):
+                        patches.extend(sta.get("patches",[]))
+                        ec_sta[device] = sta
                     if not laptop:
                         ec_to_patch.append(device)
                 else:
@@ -344,10 +345,18 @@ class SSDT:
         print(" - Found {}".format(lpc_name))
         comment = "SSDT-EC"
         if rename == True:
-            patches.append({"Comment":"EC to EC0","Find":"45435f5f","Replace":"4543305f"})
-            comment += " (Needs EC to EC0 rename)"
+            patches.insert(0,{
+                "Comment":"EC to EC0{}".format("" if not ec_sta else " - must come before any EC _STA to XSTA renames!"),
+                "Find":"45435f5f",
+                "Replace":"4543305f"
+            })
+            comment += " - Needs EC to EC0 {}".format(
+                "and EC _STA to XSTA renames" if ec_sta else "rename"
+            )
+        elif ec_sta:
+            comment += " - Needs EC _STA to XSTA renames"
         oc = {"Comment":comment,"Enabled":True,"Path":"SSDT-EC.aml"}
-        self.make_plist(oc, "SSDT-EC.aml", patches)
+        self.make_plist(oc, "SSDT-EC.aml", patches, replace=True)
         print("Creating SSDT-EC...")
         ssdt = """
 DefinitionBlock ("", "SSDT", 2, "CORP ", "SsdtEC", 0x00001000)
@@ -356,6 +365,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP ", "SsdtEC", 0x00001000)
 """.replace("[[LPCName]]",lpc_name)
         for x in ec_to_patch:
             ssdt += "    External ({}, DeviceObj)\n".format(x)
+            if x in ec_sta:
+                ssdt += "    External ({}.XSTA, {})\n".format(x,ec_sta[x].get("sta_type","MethodObj"))
         # Walk them again and add the _STAs
         for x in ec_to_patch:
             ssdt += """
@@ -369,11 +380,12 @@ DefinitionBlock ("", "SSDT", 2, "CORP ", "SsdtEC", 0x00001000)
             }
             Else
             {
-                Return (0x0F)
+                Return ([[XSTA]])
             }
         }
     }
-""".replace("[[LPCName]]",lpc_name).replace("[[ECName]]",x)
+""".replace("[[LPCName]]",lpc_name).replace("[[ECName]]",x) \
+    .replace("[[XSTA]]","{}.XSTA{}".format(x," ()" if ec_sta[x].get("sta_type","MethodObj")=="MethodObj" else "") if x in ec_sta else "0x0F")
         # Create the faked EC
         ssdt += """
     Scope ([[LPCName]])
