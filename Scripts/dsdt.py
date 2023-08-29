@@ -12,7 +12,17 @@ class DSDT:
         self.h = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         self.iasl = self.check_iasl()
         if not self.iasl:
-            raise Exception("Could not locate or download iasl!")
+            url = self.acpi_binary_tools if os.name=="nt" else \
+            self.iasl_url_macOS if sys.platform=="darwin" else \
+            self.iasl_url_linux if sys.platform.startswith("linux") else None
+            exception = "Could not locate or download iasl!"
+            if url:
+                exception += "\n\nPlease manually download {} from:\n - {}\n\nAnd place in:\n - {}\n".format(
+                    "and extract iasl.exe and acpidump.exe" if os.name=="nt" else "iasl",
+                    url,
+                    os.path.dirname(os.path.realpath(__file__))
+                )
+            raise Exception(exception)
         self.dsdt       = None
         self.dsdt_raw   = None
         self.dsdt_lines = None
@@ -114,30 +124,19 @@ class DSDT:
             return target
         # Need to download
         temp = tempfile.mkdtemp()
-        url  = None
         try:
             if sys.platform == "darwin":
-                url = self.iasl_url_macOS
+                self._download_and_extract(temp,self.iasl_url_macOS)
             elif sys.platform.startswith("linux"):
-                url = self.iasl_url_linux
+                self._download_and_extract(temp,self.iasl_url_linux)
             elif sys.platform == "win32":
-                url = self.acpi_binary_tools
                 iasl_url_windows = self.get_latest_iasl()
                 if not iasl_url_windows: raise Exception("Could not get latest iasl for Windows")
-                url = iasl_url_windows
+                self._download_and_extract(temp,iasl_url_windows)
             else: 
                 raise Exception("Unknown OS")
-            if url:
-                self._download_and_extract(temp,url)
         except Exception as e:
             print("An error occurred :(\n - {}".format(e))
-            if url:
-                print("\nPlease manually download {} from:\n - {}\n\nAnd place in:\n - {}".format(
-                    "and extract iasl.exe and acpidump.exe" if os.name=="nt" else "iasl",
-                    url,
-                    os.path.dirname(os.path.realpath(__file__))
-                ))
-            print("")
         shutil.rmtree(temp, ignore_errors=True)
         # Check again after downloading
         return self.check_iasl(try_downloading=False)
