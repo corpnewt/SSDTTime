@@ -114,19 +114,30 @@ class DSDT:
             return target
         # Need to download
         temp = tempfile.mkdtemp()
+        url  = None
         try:
             if sys.platform == "darwin":
-                self._download_and_extract(temp,self.iasl_url_macOS)
+                url = self.iasl_url_macOS
             elif sys.platform.startswith("linux"):
-                self._download_and_extract(temp,self.iasl_url_linux)
+                url = self.iasl_url_linux
             elif sys.platform == "win32":
+                url = self.acpi_binary_tools
                 iasl_url_windows = self.get_latest_iasl()
                 if not iasl_url_windows: raise Exception("Could not get latest iasl for Windows")
-                self._download_and_extract(temp,iasl_url_windows)
+                url = iasl_url_windows
             else: 
                 raise Exception("Unknown OS")
+            if url:
+                self._download_and_extract(temp,url)
         except Exception as e:
             print("An error occurred :(\n - {}".format(e))
+            if url:
+                print("\nPlease manually download {} from:\n - {}\n\nAnd place in:\n - {}".format(
+                    "and extract iasl.exe and acpidump.exe" if os.name=="nt" else "iasl",
+                    url,
+                    os.path.dirname(os.path.realpath(__file__))
+                ))
+            print("")
         shutil.rmtree(temp, ignore_errors=True)
         # Check again after downloading
         return self.check_iasl(try_downloading=False)
