@@ -2198,16 +2198,96 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
                     break
                 if menu.lower() == "n": continue
             break
+        get_igpu = False
+        igpu = ""
+        guessed = False
+        if uid == 14:
+            while True:
+                self.u.head("Arrandale/SNB/IVB _UID")
+                print("")
+                print("Some machines using _UID 14 have issues with max brightness or")
+                print("other issues.  In order to fix these - the iGPU device path must")
+                print("be discovered, and GPU registers must be set.")
+                print("")
+                print("\u001b[41;1m!! WARNING !!\u001b[0m It is recommended to try WITHOUT this first!!")
+                print("")
+                gpu_reg = self.u.grab("Would you like to include GPU register code? (y/n):  ")
+                if gpu_reg.lower() == "q":
+                    self.u.custom_quit()
+                elif gpu_reg.lower() == "m":
+                    return
+                elif gpu_reg.lower() == "y":
+                    get_igpu = True
+                    break
+                elif gpu_reg.lower() == "n":
+                    break # Leave the loop
         self.u.head("Generating PNLF")
         print("")
         print("Creating SSDT-PNLF...")
         print(" - _UID: {}".format(uid))
+        # Check if we are building the SSDT with a _UID of 14
+        if get_igpu:
+            print(" - Setting PWMMax calculations")
+            # Try to gather our iGPU device
+            paths = self.d.get_path_of_type(obj_type="Name",obj="_ADR")
+            print("Looking for iGPU device at 0x00020000...")
+            for path in paths:
+                adr = self.get_address_from_line(path[1])
+                if adr == 0x00020000:
+                    igpu = path[0][:-5]
+                    print(" - Found at {}".format(igpu))
+                    break
+            if not igpu: # Try matching by name
+                print(" - Not found!")
+                print("Searching common iGPU names...")
+                pci_roots = self.d.get_device_paths_with_hid(hid="PNP0A08")
+                pci_roots += self.d.get_device_paths_with_hid(hid="PNP0A03")
+                pci_roots += self.d.get_device_paths_with_hid(hid="ACPI0016")
+                external = []
+                for line in self.d.dsdt_lines:
+                    if not line.strip().startswith("External ("): continue # We don't need it
+                    try:
+                        path = line.split("(")[1].split(", ")[0]
+                        # Prepend the backslash and ensure trailing underscores are stripped.
+                        path = "\\"+".".join([x.rstrip("_").replace("\\","") for x in path.split(".")])
+                        external.append(path)
+                    except: pass
+                for root in pci_roots:
+                    for name in ("IGPU","_VID","VID0","VID1","GFX0","VGA","_VGA"):
+                        test_path = "{}.{}".format(root[0],name)
+                        device = self.d.get_device_paths(test_path)
+                        if device: device = device[0][0] # Unpack to the path
+                        else:
+                            # Walk the external paths and see if it's declared elsewhere?
+                            # We're not patching anything directly - just getting a pathing
+                            # reference, so it's fine to not have the surrounding code.
+                            device = next((x for x in external if test_path == x),None)
+                        if not device: continue # Not found :(
+                        # Got a device - see if it has an _ADR, and skip if so - as it was wrong in the prior loop
+                        if self.d.get_path_of_type(obj_type="Name",obj=device+"._ADR"): continue
+                        # At this point - we got a hit
+                        igpu = device
+                        print(" - Found likely iGPU device at {}".format(igpu))
         patches = []
         if "PNLF" in self.d.dsdt:
             print("PNLF detected in DSDT - generating rename...")
             patches.append({"Comment":"PNLF to XNLF Rename","Find":"504E4C46","Replace":"584E4C46"})
-        ssdt = """DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
-{
+        ssdt = """//
+// Much of the info pulled from: https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/Source/SSDT-PNLF.dsl
+//
+DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
+{"""
+        if igpu:
+            ssdt += """
+    External ([[igpu_path]], DeviceObj)
+    Scope ([[igpu_path]])
+    {
+        If (_OSI ("Darwin"))
+        {
+            OperationRegion (RMP3, PCI_Config, Zero, 0x14)
+        }
+    }"""
+        ssdt += """
     Device (PNLF)
     {
         Name (_HID, EisaId ("APP0002"))  // _HID: Hardware ID
@@ -2235,9 +2315,108 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
             {
                 Return (Zero)
             }
-        }
+        }"""
+        if igpu:
+            ssdt += """
+        If (_OSI ("Darwin"))
+        {
+            Field ([[igpu_path]].RMP3, AnyAcc, NoLock, Preserve)
+            {
+                Offset (0x02), GDID,16,
+                Offset (0x10), BAR1,32,
+            }
+            // IGPU PWM backlight register descriptions:
+            //   LEV2 not currently used
+            //   LEVL level of backlight in Sandy/Ivy
+            //   P0BL counter, when zero is vertical blank
+            //   GRAN see description below in INI1 method
+            //   LEVW should be initialized to 0xC0000000
+            //   LEVX PWMMax except FBTYPE_HSWPLUS combo of max/level (Sandy/Ivy stored in MSW)
+            //   LEVD level of backlight for Coffeelake
+            //   PCHL not currently used
+            OperationRegion (RMB1, SystemMemory, BAR1 & ~0xF, 0xe1184)
+            Field(RMB1, AnyAcc, Lock, Preserve)
+            {
+                Offset (0x48250),
+                LEV2, 32,
+                LEVL, 32,
+                Offset (0x70040),
+                P0BL, 32,
+                Offset (0xc2000),
+                GRAN, 32,
+                Offset (0xc8250),
+                LEVW, 32,
+                LEVX, 32,
+                LEVD, 32,
+                Offset (0xe1180),
+                PCHL, 32,
+            }
+            Method (_INI)
+            {
+                // Now fixup the backlight PWM depending on the framebuffer type
+                // At this point:
+                //   Local4 is RMCF.BLKT value (unused here), if specified (default is 1)
+                //   Local0 is device-id for IGPU
+                //   Local2 is LMAX, if specified (Ones means based on device-id)
+                //   Local3 is framebuffer type
+
+                // Adjustment required when using WhateverGreen.kext
+                Local0 = ^GDID
+                Local2 = Ones
+                Local3 = 0
+
+                // check Sandy/Ivy
+                // #define FBTYPE_SANDYIVY 1
+                If (LOr (LEqual (1, Local3), LNotEqual (Match (Package()
+                {
+                    // Sandy HD3000
+                    0x010b, 0x0102,
+                    0x0106, 0x1106, 0x1601, 0x0116, 0x0126,
+                    0x0112, 0x0122,
+                    // Ivy
+                    0x0152, 0x0156, 0x0162, 0x0166,
+                    0x016a,
+                    // Arrandale
+                    0x0046, 0x0042,
+                }, MEQ, Local0, MTR, 0, 0), Ones)))
+                {
+                    if (LEqual (Local2, Ones))
+                    {
+                        // #define SANDYIVY_PWMMAX 0x710
+                        Store (0x710, Local2)
+                    }
+                    // change/scale only if different than current...
+                    Store (^LEVX >> 16, Local1)
+                    If (LNot (Local1))
+                    {
+                        Store (Local2, Local1)
+                    }
+                    If (LNotEqual (Local2, Local1))
+                    {
+                        // set new backlight PWMMax but retain current backlight level by scaling
+                        Store ((^LEVL * Local2) / Local1, Local0)
+                        Store (Local2 << 16, Local3)
+                        If (LGreater (Local2, Local1))
+                        {
+                            // PWMMax is getting larger... store new PWMMax first
+                            Store (Local3, ^LEVX)
+                            Store (Local0, ^LEVL)
+                        }
+                        Else
+                        {
+                            // otherwise, store new brightness level, followed by new PWMMax
+                            Store (Local0, ^LEVL)
+                            Store (Local3, ^LEVX)
+                        }
+                    }
+                }
+            }
+        }"""
+        ssdt += """
     }
-}""".replace("[[uid_value]]",self.hexy(uid)).replace("[[uid_dec]]",str(uid))
+}"""
+        # Perform the replacements
+        ssdt = ssdt.replace("[[uid_value]]",self.hexy(uid)).replace("[[uid_dec]]",str(uid)).replace("[[igpu_path]]",igpu)
         self.write_ssdt("SSDT-PNLF",ssdt)
         oc = {
             "Comment":"Defines PNLF device with a _UID of {} for backlight control{}".format(
@@ -2248,6 +2427,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
             "Path":"SSDT-PNLF.aml"
         }
         self.make_plist(oc, "SSDT-PNLF.aml", patches, replace=True)
+        if igpu and guessed:
+            print("\n\u001b[41;1m!! WARNING !!\u001b[0m iGPU path was guessed to be {} - VERIFY BEFORE ENABLING!!".format(igpu))
         print("")
         print("Done.")
         self.patch_warn()
