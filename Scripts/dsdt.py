@@ -5,12 +5,16 @@ class DSDT:
     def __init__(self, **kwargs):
         self.dl = downloader.Downloader()
         self.r  = run.Run()
-        self.u    = utils.Utils("SSDT Time")
+        self.u  = utils.Utils("SSDT Time")
         self.iasl_url_macOS = "https://raw.githubusercontent.com/acidanthera/MaciASL/master/Dist/iasl-stable"
+        self.iasl_url_macOS_legacy = "https://raw.githubusercontent.com/acidanthera/MaciASL/master/Dist/iasl-legacy"
         self.iasl_url_linux = "https://raw.githubusercontent.com/corpnewt/linux_iasl/main/iasl.zip"
+        self.iasl_url_linux_legacy = None # Update when a suitable file is located
         self.acpi_binary_tools = "https://www.intel.com/content/www/us/en/developer/topic-technology/open/acpica/download.html"
+        self.iasl_url_windows_legacy = "https://raw.githubusercontent.com/corpnewt/iasl-legacy/main/iasl-legacy-windows.zip"
         self.h = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         self.iasl = self.check_iasl()
+        self.iasl_legacy = self.check_iasl(legacy=True)
         if not self.iasl:
             url = self.acpi_binary_tools if os.name=="nt" else \
             self.iasl_url_macOS if sys.platform=="darwin" else \
@@ -108,16 +112,18 @@ class DSDT:
         except: pass
         return None
     
-    def check_iasl(self,try_downloading=True):
+    def check_iasl(self, legacy=False, try_downloading=True):
         if sys.platform == "win32":
-            targets = (os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl.exe"),)
+            targets = (os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl-legacy.exe" if legacy else "iasl.exe"),)
         else:
-            targets = (
-                os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl-dev"),
-                os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl-stable"),
-                os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl-legacy"),
-                os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl")
-            )
+            if legacy:
+                targets = (os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl-legacy"),)
+            else:
+                targets = (
+                    os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl-dev"),
+                    os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl-stable"),
+                    os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl")
+                )
         target = next((t for t in targets if os.path.exists(t)),None)
         if target or not try_downloading:
             # Either found it - or we didn't, and have already tried downloading
@@ -126,11 +132,11 @@ class DSDT:
         temp = tempfile.mkdtemp()
         try:
             if sys.platform == "darwin":
-                self._download_and_extract(temp,self.iasl_url_macOS)
+                self._download_and_extract(temp,self.iasl_url_macOS_legacy if legacy else self.iasl_url_macOS)
             elif sys.platform.startswith("linux"):
-                self._download_and_extract(temp,self.iasl_url_linux)
+                self._download_and_extract(temp,self.iasl_url_linux_legacy if legacy else self.iasl_url_linux)
             elif sys.platform == "win32":
-                iasl_url_windows = self.get_latest_iasl()
+                iasl_url_windows = self.iasl_url_windows_legacy if legacy else self.get_latest_iasl()
                 if not iasl_url_windows: raise Exception("Could not get latest iasl for Windows")
                 self._download_and_extract(temp,iasl_url_windows)
             else: 
@@ -139,7 +145,7 @@ class DSDT:
             print("An error occurred :(\n - {}".format(e))
         shutil.rmtree(temp, ignore_errors=True)
         # Check again after downloading
-        return self.check_iasl(try_downloading=False)
+        return self.check_iasl(legacy=legacy,try_downloading=False)
 
     def _download_and_extract(self, temp, url):
         ztemp = tempfile.mkdtemp(dir=temp)
