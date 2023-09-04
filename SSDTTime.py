@@ -2428,7 +2428,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         }
         self.make_plist(oc, "SSDT-PNLF.aml", patches, replace=True)
         if igpu and guessed:
-            print("\n\u001b[41;1m!! WARNING !!\u001b[0m iGPU path was guessed to be {} - VERIFY BEFORE ENABLING!!".format(igpu))
+            print("\n\u001b[41;1m!! WARNING !!\u001b[0m iGPU path was guessed to be {} - VERIFY BEFORE USING!!".format(igpu))
         print("")
         print("Done.")
         self.patch_warn()
