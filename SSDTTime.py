@@ -1,5 +1,5 @@
 from Scripts import *
-import getpass, os, tempfile, shutil, plistlib, sys, binascii, zipfile, re, string
+import getpass, os, tempfile, shutil, plistlib, sys, binascii, zipfile, re, string, json
 
 class SSDT:
     def __init__(self, **kwargs):
@@ -18,9 +18,11 @@ class SSDT:
             os.system("color") # Allow ASNI color escapes.
             self.w = 120
             self.h = 30
-        self.iasl = None
+        self.iasl_legacy = False
         self.dsdt = None
-        self.scripts = "Scripts"
+        self.settings = os.path.join(os.path.dirname(os.path.realpath(__file__)),"Scripts","settings.json")
+        if os.path.exists(self.settings):
+            self.load_settings()
         self.output = "Results"
         self.legacy_irq = ["TMR","TIMR","IPIC","RTC"] # Could add HPET for extra patch-ness, but shouldn't be needed
         self.target_irqs = [0,2,8,11]
@@ -70,6 +72,20 @@ class SSDT:
                 "Replace" :"47505036085F4144520C04000200140F58505257"
             }
         )
+
+    def save_settings(self):
+        settings = {
+            "legacy_compiler": self.iasl_legacy
+        }
+        try: json.dump(settings,open(self.settings,"w"),indent=2)
+        except: return
+
+    def load_settings(self):
+        try:
+            settings = json.load(open(self.settings))
+            if self.d.iasl_legacy: # Only load the legacy compiler setting if we can
+                self.iasl_legacy = settings.get("legacy_compiler",False)
+        except: return
 
     def get_unique_name(self,name,target_folder,name_append="-Patched"):
         # Get a new file name in the Results folder so we don't override the original
@@ -168,10 +184,10 @@ class SSDT:
         res = self.d.check_output(self.output)
         dsl_path = os.path.join(res,ssdt_name+".dsl")
         aml_path = os.path.join(res,ssdt_name+".aml")
-        iasl_path = self.d.iasl
+        iasl_path = self.d.iasl_legacy if self.iasl_legacy else self.d.iasl
         with open(dsl_path,"w") as f:
             f.write(ssdt)
-        print("Compiling...")
+        print("Compiling{}...".format(" (Using Legacy Compiler)" if self.iasl_legacy else ""))
         out = self.r.run({"args":[iasl_path, dsl_path]})
         if out[2] != 0:
             print(" - {}".format(out[1]))
@@ -437,7 +453,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
         If (_OSI ("Darwin")) {
             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
             {
-                If (!Arg2)
+                If (LNot (Arg2))
                 {
                     Return (Buffer (One)
                     {
@@ -520,7 +536,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                     ssdt += """
             Method (_DSM, 4, NotSerialized)
             {
-                If (LEqual (Arg2, Zero)) {
+                If (LNot (Arg2)) {
                     Return (Buffer (One) { 0x03 })
                 }
 
@@ -1048,7 +1064,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
         {
             // Return our buffer if booting macOS or the XCRS method
             // no longer exists for some reason
-            If (_OSI ("Darwin") || !CondRefOf ([[name]].XCRS))
+            If (LOr (_OSI ("Darwin"), LNot(CondRefOf ([[name]].XCRS))))
             {
                 Return (BUFX)
             }
@@ -1078,7 +1094,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
         {
             // Return 0x0F if booting macOS or the XSTA method
             // no longer exists for some reason
-            If (_OSI ("Darwin") || !CondRefOf ([[name]].XSTA))
+            If (LOr (_OSI ("Darwin"), !CondRefOf ([[name]].XSTA)))
             {
                 Return (0x0F)
             }
@@ -1357,7 +1373,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
         {
             If (_OSI ("Darwin"))
             {
-                STAS = One
+                Store (One, STAS)
             }
         }
     }
@@ -1380,7 +1396,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
                 Return ([[macOS]])
             }
             // Default to [[Original]] - but return the result of the renamed XSTA if possible
-            If ((CondRefOf ([[DevPath]].XSTA)))
+            If (CondRefOf ([[DevPath]].XSTA))
             {
                 Store ([[DevPath]].XSTA[[called]], ZSTA)
             }
@@ -1419,7 +1435,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
         // Create a new _CRS method that returns the result of the renamed XCRS
         Method (_CRS, 0, Serialized)  // _CRS: Current Resource Settings
         {
-            If (_OSI ("Darwin") || !CondRefOf ([[DevPath]].XCRS))
+            If (LOr (_OSI ("Darwin"), LNot (CondRefOf ([[DevPath]].XCRS))))
             {
                 // Return our buffer if booting macOS or the XCRS method
                 // no longer exists for some reason
@@ -1454,10 +1470,13 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
             })
             Method (_STA, 0, NotSerialized)  // _STA: Status
             {
-                If (_OSI ("Darwin")) {
+                If (_OSI ("Darwin"))
+                {
                     Return (0x0F)
-                } Else {
-                    Return (0);
+                }
+                Else
+                {
+                    Return (0)
                 }
             }
         }
@@ -1686,7 +1705,13 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             Name (_ADR, Zero)  // _ADR: Address
             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
             {
-                If (LEqual (Arg2, Zero)) { Return (Buffer () { 0x03 }) }
+                If (LNot (Arg2))
+                {
+                    Return (Buffer ()
+                    {
+                        0x03
+                    })
+                }
                 Return (Package ()
                 {"""
         for i,key in enumerate(usbx_props,start=1):
@@ -1762,7 +1787,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         self.u.head("XOSI")
         print("")
         print("Creating SSDT-XOSI with support through {}...".format(target_string))
-        ssdt = """DefinitionBlock ("", "SSDT", 2, "CORP", "XOSI", 0x00001000)
+        ssdt = """DefinitionBlock ("", "SSDT", 2, "DRTNIA", "XOSI", 0x00001000)
 {
     Method (XOSI, 1, NotSerialized)
     {
@@ -1772,8 +1797,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         // https://docs.microsoft.com/en-us/windows-hardware/drivers/acpi/winacpi-osi#_osi-strings-for-windows-operating-systems
         // Add OSes from the below list as needed, most only check up to Windows 2015
         // but check what your DSDT looks for
-        Local0 = Package ()
-            {
+        Store (Package ()
+        {
 """
         # Iterate our OS versions, and stop once we've added the last supported
         for i,x in enumerate(self.osi_strings,start=1):
@@ -1783,9 +1808,16 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                 ssdt += " // "+x
                 break
             ssdt += ", // "+x+"\n" # Add a comma and newline for the next value
-        ssdt +="""\n            }
-        If (_OSI ("Darwin")) { Return ((Ones != Match (Local0, MEQ, Arg0, MTR, Zero, Zero))) }
-        Else { Return (_OSI (Arg0)) }
+        ssdt +="""
+        }, Local0)
+        If (_OSI ("Darwin"))
+        {
+            Return (LNotEqual (Match (Local0, MEQ, Arg0, MTR, Zero, Zero), Ones))
+        }
+        Else
+        {
+            Return (_OSI (Arg0))
+        }
     }
 }"""
         patches = []
@@ -2300,7 +2332,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
             return
 
     def main(self):
-        self.u.resize(self.w,self.h)
+        h = self.h + (1 if self.d.iasl_legacy and os.name!="nt" else 0) # Resize if we add an extra menu entry
+        self.u.resize(self.w,h)
         cwd = os.getcwd()
         self.u.head()
         print("")
@@ -2322,6 +2355,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         print("")
         if sys.platform.startswith("linux") or sys.platform == "win32":
             print("P. Dump DSDT     - Automatically dump the system DSDT")
+        if self.d.iasl_legacy:
+            print("L. Use Legacy Compiler (Current: {})".format("Enabled" if self.iasl_legacy else "Disabled"))
         print("D. Select DSDT or origin folder")
         print("Q. Quit")
         print("")
@@ -2364,6 +2399,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
                     decompile=False
                 )
             )
+        elif menu.lower() == "l" and self.d.iasl_legacy:
+            self.iasl_legacy = not self.iasl_legacy
+            self.save_settings()
         return
 
 if __name__ == '__main__':
