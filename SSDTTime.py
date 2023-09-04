@@ -2209,7 +2209,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
                 print("other issues.  In order to fix these - the iGPU device path must")
                 print("be discovered and some GPU registers need to be set.")
                 print("")
-                print("\u001b[41;1m!! WARNING !!\u001b[0m It is recommended to try WITHOUT this first!!")
+                print("\u001b[43;1m!! WARNING !!\u001b[0m It is recommended to try WITHOUT this first!!")
                 print("")
                 gpu_reg = self.u.grab("Would you like to include GPU register code? (y/n):  ")
                 if gpu_reg.lower() == "q":
