@@ -1762,7 +1762,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         self.u.head("XOSI")
         print("")
         print("Creating SSDT-XOSI with support through {}...".format(target_string))
-        ssdt = """DefinitionBlock ("", "SSDT", 2, "DRTNIA", "XOSI", 0x00001000)
+        ssdt = """DefinitionBlock ("", "SSDT", 2, "CORP", "XOSI", 0x00001000)
 {
     Method (XOSI, 1, NotSerialized)
     {
