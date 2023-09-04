@@ -1094,7 +1094,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
         {
             // Return 0x0F if booting macOS or the XSTA method
             // no longer exists for some reason
-            If (LOr (_OSI ("Darwin"), !CondRefOf ([[name]].XSTA)))
+            If (LOr (_OSI ("Darwin"), LNot (CondRefOf ([[name]].XSTA))))
             {
                 Return (0x0F)
             }
