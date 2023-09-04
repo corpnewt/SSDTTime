@@ -2332,7 +2332,15 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
             return
 
     def main(self):
-        h = self.h + (1 if self.d.iasl_legacy and os.name!="nt" else 0) # Resize if we add an extra menu entry
+        h_add = 0
+        if os.name != "nt":
+            # Increase the window height to accommodate new entries
+            # Windows cmd windows are taller than macOS/Linux terminal already
+            if self.d.iasl_legacy: # We have a "Use legacy compiler" option
+                h_add += 1
+            if sys.platform.startswith("linux"): # We have the option to dump DSDT
+                h_add += 1
+        h = self.h + h_add
         self.u.resize(self.w,h)
         cwd = os.getcwd()
         self.u.head()
