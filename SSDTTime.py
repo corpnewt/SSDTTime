@@ -2193,14 +2193,21 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
                     print("{} is a custom _UID which may require customization to setup,".format(uid))
                     print("or not have support at all.")
                     print("")
+                    print("M. Return to Main Menu")
+                    print("Q. Quit")
+                    print("")
                     menu = self.u.grab("Are you sure you want to use it? (y/n):  ")
+                    if menu.lower() == "q":
+                        self.u.custom_quit()
+                    elif menu.lower() == "m":
+                        return
                     if not menu.lower() in ("y","n"): continue
                     break
                 if menu.lower() == "n": continue
             break
         get_igpu = False
         igpu = ""
-        guessed = False
+        guessed = manual = False
         if uid == 14:
             while True:
                 self.u.head("Arrandale/SNB/IVB _UID")
@@ -2210,6 +2217,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
                 print("be discovered and some GPU registers need to be set.")
                 print("")
                 print("\u001b[43;1m!! WARNING !!\u001b[0m It is recommended to try WITHOUT this first!!")
+                print("")
+                print("M. Return to Main Menu")
+                print("Q. Quit")
                 print("")
                 gpu_reg = self.u.grab("Would you like to include GPU register code? (y/n):  ")
                 if gpu_reg.lower() == "q":
@@ -2267,7 +2277,72 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
                         if self.d.get_path_of_type(obj_type="Name",obj=device+"._ADR"): continue
                         # At this point - we got a hit
                         igpu = device
+                        guessed = True
                         print(" - Found likely iGPU device at {}".format(igpu))
+        if get_igpu and (not igpu or guessed):
+            # We need to prompt the user based on what we have
+            if igpu:
+                while True:
+                    self.u.head("iGPU Path")
+                    print("")
+                    print("Found likely iGPU at {}".format(igpu))
+                    print("")
+                    print("M. Return to Main Menu")
+                    print("Q. Quit")
+                    print("")
+                    manual_igpu = self.u.grab("Would you like to use this path? (y/n):  ")
+                    if manual_igpu.lower() == "q":
+                        self.u.custom_quit()
+                    elif manual_igpu.lower() == "m":
+                        return
+                    elif manual_igpu.lower() == "y":
+                        break
+                    elif manual_igpu.lower() == "n":
+                        igpu = ""
+                        break # Leave the loop
+            if not igpu:
+                while True:
+                    self.u.head("Custom iGPU Path")
+                    print("")
+                    if not guessed:
+                        print("No valid iGPU path was found in the passed DSDT.\n")
+                    print("Please type the iGPU ACPI path to use.  Each path element is limited")
+                    print("to 4 alphanumeric characters (starting with a letter or underscore),")
+                    print("and separated by spaces.")
+                    print("")
+                    print("e.g. _SB_.PCI0.GFX0")
+                    print("")
+                    print("M. Return to Main Menu")
+                    print("Q. Quit")
+                    print("")
+                    manual_igpu = self.u.grab("Please type the iGPU path to use:  ")
+                    if manual_igpu.lower() == "q":
+                        self.u.custom_quit()
+                    elif manual_igpu.lower() == "m":
+                        return
+                    else: # Maybe got a path - qualify it
+                        parts = manual_igpu.upper().split(".")
+                        # Make sure it's between 1 and 4 chars long, and doesn't start with a number
+                        valid = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+                        nostart = "0123456789"
+                        if any((not 0<len(p)<5 or p[0] in nostart or not all((x in valid for x in p)) for p in parts)):
+                            continue
+                        # Strip trailing underscores
+                        parts = [p.rstrip("_") for p in parts]
+                        # Join them with a leading slash
+                        igpu = "\\"+".".join(parts)
+                        guessed = False
+                        manual  = True
+                        break
+            self.u.head("Generating PNLF")
+            print("")
+            print("Creating SSDT-PNLF...")
+            print(" - _UID: {}".format(uid))
+            print(" - iGPU Path: {}{}".format(
+                igpu,
+                " (Guessed)" if guessed else " (Manually Entered)" if manual else ""
+            ))
+                        
         patches = []
         if "PNLF" in self.d.dsdt:
             print("PNLF detected in DSDT - generating rename...")
@@ -2422,8 +2497,11 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
             "Path":"SSDT-PNLF.aml"
         }
         self.make_plist(oc, "SSDT-PNLF.aml", patches, replace=True)
-        if igpu and guessed:
-            print("\n\u001b[41;1m!! WARNING !!\u001b[0m iGPU path was guessed to be {} - VERIFY BEFORE USING!!".format(igpu))
+        if igpu:
+            if guessed:
+                print("\n\u001b[41;1m!! WARNING !!\u001b[0m iGPU path was guessed to be {} - VERIFY BEFORE USING!!".format(igpu))
+            if manual:
+                print("\n\u001b[41;1m!! WARNING !!\u001b[0m iGPU path was manually set to {} - VERIFY BEFORE USING!!".format(igpu))
         print("")
         print("Done.")
         self.patch_warn()
