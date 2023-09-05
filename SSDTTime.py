@@ -2280,13 +2280,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         if igpu:
             ssdt += """
     External ([[igpu_path]], DeviceObj)
-    Scope ([[igpu_path]])
-    {
-        If (_OSI ("Darwin"))
-        {
-            OperationRegion (RMP3, PCI_Config, Zero, 0x14)
-        }
-    }"""
+"""
         ssdt += """
     Device (PNLF)
     {
@@ -2318,41 +2312,42 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         }"""
         if igpu:
             ssdt += """
-        If (_OSI ("Darwin"))
+        Method (_INI, 0, Serialized)
         {
-            Field ([[igpu_path]].RMP3, AnyAcc, NoLock, Preserve)
+            If (LAnd (_OSI ("Darwin"), CondRefOf ([[igpu_path]])))
             {
-                Offset (0x02), GDID,16,
-                Offset (0x10), BAR1,32,
-            }
-            // IGPU PWM backlight register descriptions:
-            //   LEV2 not currently used
-            //   LEVL level of backlight in Sandy/Ivy
-            //   P0BL counter, when zero is vertical blank
-            //   GRAN see description below in INI1 method
-            //   LEVW should be initialized to 0xC0000000
-            //   LEVX PWMMax except FBTYPE_HSWPLUS combo of max/level (Sandy/Ivy stored in MSW)
-            //   LEVD level of backlight for Coffeelake
-            //   PCHL not currently used
-            OperationRegion (RMB1, SystemMemory, BAR1 & ~0xF, 0xe1184)
-            Field(RMB1, AnyAcc, Lock, Preserve)
-            {
-                Offset (0x48250),
-                LEV2, 32,
-                LEVL, 32,
-                Offset (0x70040),
-                P0BL, 32,
-                Offset (0xc2000),
-                GRAN, 32,
-                Offset (0xc8250),
-                LEVW, 32,
-                LEVX, 32,
-                LEVD, 32,
-                Offset (0xe1180),
-                PCHL, 32,
-            }
-            Method (_INI)
-            {
+                OperationRegion ([[igpu_path]].RMP3, PCI_Config, Zero, 0x14)
+                Field ([[igpu_path]].RMP3, AnyAcc, NoLock, Preserve)
+                {
+                    Offset (0x02), GDID,16,
+                    Offset (0x10), BAR1,32,
+                }
+                // IGPU PWM backlight register descriptions:
+                //   LEV2 not currently used
+                //   LEVL level of backlight in Sandy/Ivy
+                //   P0BL counter, when zero is vertical blank
+                //   GRAN see description below in INI1 method
+                //   LEVW should be initialized to 0xC0000000
+                //   LEVX PWMMax except FBTYPE_HSWPLUS combo of max/level (Sandy/Ivy stored in MSW)
+                //   LEVD level of backlight for Coffeelake
+                //   PCHL not currently used
+                OperationRegion (RMB1, SystemMemory, BAR1 & ~0xF, 0xe1184)
+                Field(RMB1, AnyAcc, Lock, Preserve)
+                {
+                    Offset (0x48250),
+                    LEV2, 32,
+                    LEVL, 32,
+                    Offset (0x70040),
+                    P0BL, 32,
+                    Offset (0xc2000),
+                    GRAN, 32,
+                    Offset (0xc8250),
+                    LEVW, 32,
+                    LEVX, 32,
+                    LEVD, 32,
+                    Offset (0xe1180),
+                    PCHL, 32,
+                }
                 // Now fixup the backlight PWM depending on the framebuffer type
                 // At this point:
                 //   Local4 is RMCF.BLKT value (unused here), if specified (default is 1)
@@ -2361,7 +2356,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
                 //   Local3 is framebuffer type
 
                 // Adjustment required when using WhateverGreen.kext
-                Local0 = ^GDID
+                Local0 = GDID
                 Local2 = Ones
                 Local3 = 0
 
@@ -2386,7 +2381,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
                         Store (0x710, Local2)
                     }
                     // change/scale only if different than current...
-                    Store (^LEVX >> 16, Local1)
+                    Store (LEVX >> 16, Local1)
                     If (LNot (Local1))
                     {
                         Store (Local2, Local1)
@@ -2394,19 +2389,19 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
                     If (LNotEqual (Local2, Local1))
                     {
                         // set new backlight PWMMax but retain current backlight level by scaling
-                        Store ((^LEVL * Local2) / Local1, Local0)
+                        Store ((LEVL * Local2) / Local1, Local0)
                         Store (Local2 << 16, Local3)
                         If (LGreater (Local2, Local1))
                         {
                             // PWMMax is getting larger... store new PWMMax first
-                            Store (Local3, ^LEVX)
-                            Store (Local0, ^LEVL)
+                            Store (Local3, LEVX)
+                            Store (Local0, LEVL)
                         }
                         Else
                         {
                             // otherwise, store new brightness level, followed by new PWMMax
-                            Store (Local0, ^LEVL)
-                            Store (Local3, ^LEVX)
+                            Store (Local0, LEVL)
+                            Store (Local3, LEVX)
                         }
                     }
                 }
