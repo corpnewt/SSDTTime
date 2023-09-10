@@ -187,7 +187,7 @@ class SSDT:
         iasl_path = self.d.iasl_legacy if self.iasl_legacy else self.d.iasl
         with open(dsl_path,"w") as f:
             f.write(ssdt)
-        print("Compiling{}...".format(" (Using Legacy Compiler)" if self.iasl_legacy else ""))
+        print("Compiling...{}".format(" \u001b[43;1m!! Using Legacy Compiler !!\u001b[0m" if self.iasl_legacy else ""))
         out = self.r.run({"args":[iasl_path, dsl_path]})
         if out[2] != 0:
             print(" - {}".format(out[1]))
@@ -2618,7 +2618,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         if sys.platform.startswith("linux") or sys.platform == "win32":
             print("P. Dump DSDT     - Automatically dump the system DSDT")
         if self.d.iasl_legacy:
-            print("L. Use Legacy Compiler (Current: {})".format("Enabled" if self.iasl_legacy else "Disabled"))
+            print("L. Use Legacy Compiler for macOS 10.6 and prior: {}".format("\u001b[43;1m!! Enabled !!\u001b[0m" if self.iasl_legacy else "Disabled"))
         print("D. Select DSDT or origin folder")
         print("Q. Quit")
         print("")
