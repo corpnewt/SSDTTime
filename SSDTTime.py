@@ -2347,6 +2347,32 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         if "PNLF" in self.d.dsdt:
             print("PNLF detected in DSDT - generating rename...")
             patches.append({"Comment":"PNLF to XNLF Rename","Find":"504E4C46","Replace":"584E4C46"})
+        # Check for Name (NBCF, Zero) or Name (NBCF, 0x00)
+        nbcf_old = binascii.unhexlify("084E4243460A00")
+        nbcf_new = binascii.unhexlify("084E42434600")
+        nbcf = False
+        if nbcf_old in self.d.dsdt_raw:
+            print("Name (NBCF, 0x00) detected in DSDT - generating patch...")
+            nbcf = True
+            # Got a hit with the old approach
+            patches.append({
+                "Comment":"NBCF 0x00 to 0x01 for BrightnessKeys.kext",
+                "Find":"084E4243460A00",
+                "Replace":"084E4243460A01",
+                "Enabled":False,
+                "Disabled":True
+            })
+        if nbcf_new in self.d.dsdt_raw:
+            print("Name (NBCF, Zero) detected in DSDT - generating patch...")
+            nbcf = True
+            # Got a hit with the new approach
+            patches.append({
+                "Comment":"NBCF Zero to One for BrightnessKeys.kext",
+                "Find":"084E42434600",
+                "Replace":"084E42434601",
+                "Enabled":False,
+                "Disabled":True
+            })
         ssdt = """//
 // Much of the info pulled from: https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/Source/SSDT-PNLF.dsl
 //
@@ -2491,7 +2517,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         oc = {
             "Comment":"Defines PNLF device with a _UID of {} for backlight control{}".format(
                 uid,
-                " - requires PNLF to XNLF rename" if patches else ""
+                " - requires PNLF to XNLF rename" if any("XNLF" in p["Comment"] for p in patches) else ""
             ),
             "Enabled":True,
             "Path":"SSDT-PNLF.aml"
@@ -2502,6 +2528,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
                 print("\n\u001b[41;1m!! WARNING !!\u001b[0m iGPU path was guessed to be {} - VERIFY BEFORE USING!!".format(igpu))
             if manual:
                 print("\n\u001b[41;1m!! WARNING !!\u001b[0m iGPU path was manually set to {} - VERIFY BEFORE USING!!".format(igpu))
+        if nbcf:
+            print("\n\u001b[41;1m!! WARNING !!\u001b[0m NBCF patch was generated - VERIFY BEFORE ENABLING!!")
         print("")
         print("Done.")
         self.patch_warn()
