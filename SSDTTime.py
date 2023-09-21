@@ -999,7 +999,11 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                 print("")
         # Restore the original DSDT in memory
         self.d.dsdt_raw = saved_dsdt
-        oc = {"Comment":"{} _CRS (Needs _CRS to XCRS Rename)".format(name.split(".")[-1].lstrip("\\")),"Enabled":True,"Path":"SSDT-HPET.aml"}
+        oc = {
+            "Comment":"HPET Device Fake" if hpet_fake else "{} _CRS (Needs _CRS to XCRS Rename)".format(name.split(".")[-1].lstrip("\\")),
+            "Enabled":True,
+            "Path":"SSDT-HPET.aml"
+        }
         self.make_plist(oc, "SSDT-HPET.aml", patches)
         print("Creating SSDT-HPET...")
         if hpet_fake:
