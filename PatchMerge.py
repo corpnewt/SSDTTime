@@ -103,9 +103,10 @@ class PatchMerge:
             print(" - Adding {:,} SSDT{}...".format(len(ssdts),"" if len(ssdts)==1 else "s"))
             s_orig.extend(ssdts)
             if s_broken:
-                print("\n !! {:,} Malformed entr{} found - please fix your confing.plist !!".format(
+                print("\n !! {:,} Malformed entr{} found - please fix your {} !!".format(
                     len(s_broken),
-                    "y" if len(s_broken)==1 else "ies"
+                    "y" if len(s_broken)==1 else "ies",
+                    os.path.basename(self.config_path)
                 ))
         print("")
         if not patch:
@@ -131,9 +132,10 @@ class PatchMerge:
             print(" - Adding {:,} patch{}...".format(len(patch),"" if len(patch)==1 else "es"))
             p_orig.extend(patch)
             if p_broken:
-                print("\n !! {:,} Malformed entr{} found - please fix your confing.plist !!".format(
+                print("\n !! {:,} Malformed entr{} found - please fix your {} !!".format(
                     len(p_broken),
-                    "y" if len(p_broken)==1 else "ies"
+                    "y" if len(p_broken)==1 else "ies",
+                    os.path.basename(self.config_path)
                 ))
         print("")
         if not drops:
@@ -163,9 +165,10 @@ class PatchMerge:
             print(" - Dropping {:,} table{}...".format(len(drops),"" if len(drops)==1 else "s"))
             d_orig.extend(drops)
             if d_broken:
-                print("\n !! {:,} Malformed entr{} found - please fix your confing.plist !!".format(
+                print("\n !! {:,} Malformed entr{} found - please fix your {} !!".format(
                     len(d_broken),
-                    "y" if len(d_broken)==1 else "ies"
+                    "y" if len(d_broken)==1 else "ies",
+                    os.path.basename(self.config_path)
                 ))
         print("")
         output_path = os.path.join(self.output,os.path.basename(self.config_path))
