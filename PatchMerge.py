@@ -82,10 +82,12 @@ class PatchMerge:
         else:
             print("--- Walking target SSDTs ({:,} total)...".format(len(ssdts)))
             s_rem = []
+            # Gather any entries broken from user error
+            s_broken = [x for x in s_orig if not isinstance(x,dict)] if self.config_type == "OpenCore" else []
             for s in ssdts:
-                if isinstance(s,dict):
+                if self.config_type == "OpenCore":
                     print(" - Checking {}...".format(s["Path"]))
-                    existing = [x for x in s_orig if x["Path"] == s["Path"]]
+                    existing = [x for x in s_orig if isinstance(x,dict) and x["Path"] == s["Path"]]
                 else:
                     print(" - Checking {}...".format(s))
                     existing = [x for x in s_orig if x == s]
@@ -100,15 +102,22 @@ class PatchMerge:
                 print(" - No duplicates to remove...")
             print(" - Adding {:,} SSDT{}...".format(len(ssdts),"" if len(ssdts)==1 else "s"))
             s_orig.extend(ssdts)
+            if s_broken:
+                print("\n !! {:,} Malformed entr{} found - please fix your confing.plist !!".format(
+                    len(s_broken),
+                    "y" if len(s_broken)==1 else "ies"
+                ))
         print("")
         if not patch:
             print("--- No patches to add - skipping...")
         else:
             print("--- Walking target patches ({:,} total)...".format(len(patch)))
             p_rem = []
+            # Gather any entries broken from user error
+            p_broken = [x for x in p_orig if not isinstance(x,dict)]
             for p in patch:
                 print(" - Checking {}...".format(p["Comment"]))
-                existing = [x for x in p_orig if x["Find"] == p["Find"] and x["Replace"] == p["Replace"]]
+                existing = [x for x in p_orig if isinstance(x,dict) and x["Find"] == p["Find"] and x["Replace"] == p["Replace"]]
                 if existing:
                     print(" --> Located {:,} existing to replace...".format(len(existing)))
                     p_rem.extend(existing)
@@ -121,20 +130,27 @@ class PatchMerge:
                 print(" - No duplicates to remove...")
             print(" - Adding {:,} patch{}...".format(len(patch),"" if len(patch)==1 else "es"))
             p_orig.extend(patch)
+            if p_broken:
+                print("\n !! {:,} Malformed entr{} found - please fix your confing.plist !!".format(
+                    len(p_broken),
+                    "y" if len(p_broken)==1 else "ies"
+                ))
         print("")
         if not drops:
             print("--- No tables to drop - skipping...")
         else:
             print("--- Walking target tables to drop ({:,} total)...".format(len(drops)))
             d_rem = []
+            # Gather any entries broken from user error
+            d_broken = [x for x in d_orig if not isinstance(x,dict)]
             for d in drops:
                 if self.config_type == "OpenCore":
                     print(" - Checking {}...".format(d["Comment"]))
-                    existing = [x for x in d_orig if x["TableSignature"] == d["TableSignature"] and x["OemTableId"] == d["OemTableId"]]
+                    existing = [x for x in d_orig if isinstance(x,dict) and x["TableSignature"] == d["TableSignature"] and x["OemTableId"] == d["OemTableId"]]
                 else:
                     name = " - ".join([x for x in (d.get("Signature",""),d.get("TableId","")) if x]) or "Unknown Dropped Table"
                     print(" - Checking {}...".format(name))
-                    existing = [x for x in d_orig if x.get("Signature") == d.get("Signature") and x.get("TableId") == d.get("TableId")]
+                    existing = [x for x in d_orig if isinstance(x,dict) and x.get("Signature") == d.get("Signature") and x.get("TableId") == d.get("TableId")]
                 if existing:
                     print(" --> Located {:,} existing to replace...".format(len(existing)))
                     d_rem.extend(existing)
@@ -146,6 +162,11 @@ class PatchMerge:
                 print(" - No duplicates to remove...")
             print(" - Dropping {:,} table{}...".format(len(drops),"" if len(drops)==1 else "s"))
             d_orig.extend(drops)
+            if d_broken:
+                print("\n !! {:,} Malformed entr{} found - please fix your confing.plist !!".format(
+                    len(d_broken),
+                    "y" if len(d_broken)==1 else "ies"
+                ))
         print("")
         output_path = os.path.join(self.output,os.path.basename(self.config_path))
         print("Saving to {}...".format(output_path))
