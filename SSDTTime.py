@@ -1371,7 +1371,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
 """
         if any((x.get("has_var") for x in (awac_dict,rtc_dict))):
             ssdt += """    External (STAS, IntObj)
-    Scope (\)
+    Scope (\\)
     {
         Method (_INI, 0, NotSerialized)  // _INI: Initialize
         {
@@ -1702,7 +1702,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "UsbReset", 0x00001000)
 // https://github.com/dortania/OpenCore-Post-Install/blob/master/extra-files/SSDT-USBX.aml
 DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
 {
-    Scope (\_SB)
+    Scope (\\_SB)
     {
         Device (USBX)
         {
