@@ -14,8 +14,16 @@ class SSDT:
             exit(1)
         self.w = 80
         self.h = 24
+        self.red = "\u001b[41;1m"
+        self.yel = "\u001b[43;1m"
+        self.rst = "\u001b[0m"
         if os.name == "nt":
-            os.system("color") # Allow ASNI color escapes.
+            if 2/3==0:
+                # ANSI escapes don't seem to work properly in Windows
+                # with python 2.x - clear them out
+                self.red = self.yel = self.rst = ""
+            else:
+                os.system("color") # Allow ASNI color escapes.
             self.w = 120
             self.h = 30
         self.iasl_legacy = False
@@ -187,7 +195,7 @@ class SSDT:
         iasl_path = self.d.iasl_legacy if self.iasl_legacy else self.d.iasl
         with open(dsl_path,"w") as f:
             f.write(ssdt)
-        print("Compiling...{}".format(" \u001b[43;1m!! Using Legacy Compiler !!\u001b[0m" if self.iasl_legacy else ""))
+        print("Compiling...{}".format(" {}!! Using Legacy Compiler !!{}".format(self.yel,self.rst) if self.iasl_legacy else ""))
         out = self.r.run({"args":[iasl_path, dsl_path]})
         if out[2] != 0:
             print(" - {}".format(out[1]))
@@ -301,7 +309,7 @@ class SSDT:
 
     def patch_warn(self):
         # Warn users to ensure they merge the patches_XX.plist contents with their config.plist
-        print("\n\u001b[41;1m!! WARNING !!\u001b[0m  Make sure you merge the contents of patches_[OC/Clover].plist")
+        print("\n{}!! WARNING !!{}  Make sure you merge the contents of patches_[OC/Clover].plist".format(self.red,self.rst))
         print("               with your config.plist!\n")
 
     def fake_ec(self, laptop = False):
@@ -1493,7 +1501,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
         # See if we just generated a failsafe - and encourage manual checking
         # Would require only an RTC device (no AWAC) that has an _STA with no STAS var
         if rtc_dict.get("valid") and not awac_dict.get("valid") and rtc_dict.get("sta") and not rtc_dict.get("has_var") and not rtc_range_needed:
-            print("\n   \u001b[43;1m!! NOTE !!\u001b[0m  Only RTC (no AWAC) detected with an _STA method and no STAS")
+            print("\n   {}!! NOTE !!{}  Only RTC (no AWAC) detected with an _STA method and no STAS".format(self.yel,self.rst))
             print("               variable! Patch(es) and SSDT-RTCAWAC created as a failsafe,")
             print("               but verify you need them by checking the RTC._STA conditions!")
         self.patch_warn()
@@ -2097,9 +2105,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "ADROVER", 0x00000000)
                     patch["Enabled"] = False
                     patch["Disabled"] = True
                 self.make_plist(oc,None,patches)
-                print("\n\u001b[41;1m!! WARNING !!\u001b[0m SSDT-ADROVER disables existing devices - VERIFY BEFORE ENABLING!!")
+                print("\n{}!! WARNING !!{} SSDT-ADROVER disables existing devices - VERIFY BEFORE ENABLING!!".format(self.red,self.rst))
                 if patches:
-                    print("\u001b[41;1m!! WARNING !!\u001b[0m _STA to XSTA patches were added - VERIFY BEFORE ENABLING!!")
+                    print("{}!! WARNING !!{} _STA to XSTA patches were added - VERIFY BEFORE ENABLING!!".format(self.red,self.rst))
                 print("")
             else:
                 print(" - Devices need to be adjusted for Bridging to work!")
@@ -2220,7 +2228,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
                 print("other issues.  In order to fix these - the iGPU device path must")
                 print("be discovered and some GPU registers need to be set.")
                 print("")
-                print("\u001b[43;1m!! WARNING !!\u001b[0m It is recommended to try WITHOUT this first!!")
+                print("{}!! WARNING !!{} It is recommended to try WITHOUT this first!!".format(self.yel,self.rst))
                 print("")
                 print("M. Return to Main Menu")
                 print("Q. Quit")
@@ -2529,11 +2537,11 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         self.make_plist(oc, "SSDT-PNLF.aml", patches, replace=True)
         if igpu:
             if guessed:
-                print("\n\u001b[41;1m!! WARNING !!\u001b[0m iGPU path was guessed to be {} - VERIFY BEFORE USING!!".format(igpu))
+                print("\n{}!! WARNING !!{} iGPU path was guessed to be {} - VERIFY BEFORE USING!!".format(self.red,self.rst,igpu))
             if manual:
-                print("\n\u001b[41;1m!! WARNING !!\u001b[0m iGPU path was manually set to {} - VERIFY BEFORE USING!!".format(igpu))
+                print("\n{}!! WARNING !!{} iGPU path was manually set to {} - VERIFY BEFORE USING!!".format(self.red,self.rst,igpu))
         if nbcf:
-            print("\n\u001b[41;1m!! WARNING !!\u001b[0m NBCF patch was generated - VERIFY BEFORE ENABLING!!")
+            print("\n{}!! WARNING !!{} NBCF patch was generated - VERIFY BEFORE ENABLING!!".format(self.red,self.rst))
         print("")
         print("Done.")
         self.patch_warn()
@@ -2650,7 +2658,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         if sys.platform.startswith("linux") or sys.platform == "win32":
             print("P. Dump DSDT     - Automatically dump the system DSDT")
         if self.d.iasl_legacy:
-            print("L. Use Legacy Compiler for macOS 10.6 and prior: {}".format("\u001b[43;1m!! Enabled !!\u001b[0m" if self.iasl_legacy else "Disabled"))
+            print("L. Use Legacy Compiler for macOS 10.6 and prior: {}".format("{}!! Enabled !!{}".format(self.yel,self.rst) if self.iasl_legacy else "Disabled"))
         print("D. Select DSDT or origin folder")
         print("Q. Quit")
         print("")
