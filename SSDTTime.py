@@ -154,9 +154,10 @@ class SSDT:
                     self.u.grab("Press [enter] to continue...")
                     return path
         # No patches worked - write the original back
-        print("Removing patched file...")
-        try: os.remove(target_path)
-        except: print(" - Failed to remove!")
+        if os.path.exists(target_path):
+            print("Removing patched file...")
+            try: os.remove(target_path)
+            except: print(" - Failed to remove!")
         print("\n{} could not be decompiled!".format(os.path.basename(path)))
         print("")
         self.u.grab("Press [enter] to return...")
