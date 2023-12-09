@@ -569,6 +569,98 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         self.patch_warn()
         self.u.grab("Press [enter] to return...")
 
+    def ssdt_cpur(self):
+        if not self.ensure_dsdt():
+            return
+        self.u.head("CPUR")
+        print("")
+        print("Determining CPU name scheme...")
+        # Set cpu_name to None in case the user built SSDT-PLUG in advance
+        cpu_name = None
+        try: cpu_name = self.d.get_processor_paths("")[0][0]
+        except: cpu_name != None
+        if cpu_name:
+            print(" - Processor object already exists! You don't need SSDT-CPUR!")
+            print("")
+            self.u.grab("Press [enter] to return to main menu...")
+            return
+        print(" - Locating ACPI0007 devices...")
+        core_list = self.d.get_device_paths_with_hid("ACPI0007")
+        core_number = len(core_list) - 1
+        print(f" - Found {core_number + 1} cores.")
+        first_core = core_list[0][0].split(".")[2]
+        if first_core == "CP00":
+            core_prefix = "C0"
+        else:
+            core_prefix = "CP"
+        first_core = core_prefix + "00"
+        cpur_uid = 1
+        first_core_number = 0
+        oc = {"Comment":"SSDT-CPUR","Enabled":True,"Path":"SSDT-CPUR.aml"}
+        self.make_plist(oc, "SSDT-CPUR.aml", ())
+        print("Creating SSDT-CPUR...")
+        ssdt = """//
+// Based on the sample found at https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/Source/SSDT-PLUG-ALT.dsl
+// With information from https://www.insanelymac.com/forum/topic/349526-cpu-wrapping-ssdt-cpu-wrap-ssdt-cpur-acpi0007/
+//
+DefinitionBlock ("", "SSDT", 2, "SSDTTIME", "SSDTCPUR", 0x00000000)
+{
+    External (_SB_, DeviceObj)
+    Scope (\_SB)
+    {
+        Processor ([[first_core]], 0x00, 0x00000000, 0x06)
+        {
+            Name (_HID, "ACPI0007" /* Processor Device */)  // _HID: Hardware ID
+            Name (_UID, [[cpur_uid]])  // _UID: Unique ID
+            Method (_STA, 0, NotSerialized)  // _STA: Status
+            {
+                If (_OSI ("Darwin"))
+                {
+                    Return (0x0F)
+                }
+                Else
+                {
+                    Return (Zero)
+                }
+            }
+        }
+""".replace("[[first_core]]",first_core).replace("[[cpur_uid]]",str(cpur_uid))
+        for i in range(core_number):
+            if first_core_number == core_number:
+                break
+            if first_core_number >= 9:
+                core = core_prefix + str(first_core_number + 1)
+            else:
+                core = core_prefix + "0" + str(first_core_number + 1)
+            ssdt += """
+        Processor ([[core]], 0x00, 0x00000000, 0x06)
+        {
+            Name (_HID, "ACPI0007" /* Processor Device */)  // _HID: Hardware ID
+            Name (_UID, [[cpur_uid]])  // _UID: Unique ID
+            Method (_STA, 0, NotSerialized)  // _STA: Status
+            {
+                If (_OSI ("Darwin"))
+                {
+                    Return (0x0F)
+                }
+                Else
+                {
+                    Return (Zero)
+                }
+            }
+        }""".replace("[[core]]",(core)).replace("[[cpur_uid]]",str(cpur_uid + 1))
+            first_core_number += 1
+            cpur_uid +=1
+
+        ssdt += """
+    }
+}"""
+        self.write_ssdt("SSDT-CPUR",ssdt)
+        print("")
+        print("Done.")
+        self.patch_warn()
+        self.u.grab("Press [enter] to return...")
+
     def list_irqs(self):
         # Walks the DSDT keeping track of the current device and
         # saving the IRQNoFlags if found
@@ -2652,7 +2744,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         print("8. USB Reset     - Reset USB controllers to allow hardware mapping")
         print("9. PCI Bridge    - Create missing PCI bridges for passed device path")
         print("0. PNLF          - Sets up a PNLF device for laptop backlight control")
-        print("A. XOSI          - _OSI rename and patch to return true for a range of Windows")
+        print("A. CPUR          - Replaces Device objects with Processor objects")
+        print("B. XOSI          - _OSI rename and patch to return true for a range of Windows")
         print("                   versions - also checks for OSID")
         print("B. Fix DMAR      - Remove Reserved Memory Regions from the DMAR table")
         print("")
@@ -2692,6 +2785,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         elif menu == "0":
             self.ssdt_pnlf()
         elif menu.lower() == "a":
+            self.ssdt_cpur()
+        elif menu.lower() == "b":
             self.ssdt_xosi()
         elif menu.lower() == "b":
             self.fix_dmar()
