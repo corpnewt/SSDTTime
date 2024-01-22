@@ -1,4 +1,4 @@
-import os, tempfile, shutil, plistlib, sys, binascii, zipfile, getpass
+import os, errno, tempfile, shutil, plistlib, sys, binascii, zipfile, getpass
 from . import run, downloader, utils
 
 class DSDT:
@@ -27,70 +27,219 @@ class DSDT:
                     os.path.dirname(os.path.realpath(__file__))
                 )
             raise Exception(exception)
-        self.dsdt       = None
-        self.dsdt_raw   = None
-        self.dsdt_lines = None
-        self.dsdt_scope = []
-        self.dsdt_paths = []
+        self.allowed_signatures = ("APIC","DMAR","DSDT","SSDT")
+        self.mixed_listing      = ("DSDT","SSDT")
+        self.acpi_tables = {}
 
-    def load(self, dsdt): # Requires the full path
-        cwd = os.getcwd()
-        got_origin = False
-        origin_path = dsdt
-        ret = True
-        if os.path.isdir(dsdt):
-            # Check for DSDT.aml inside
-            if os.path.exists(os.path.join(dsdt,"DSDT.aml")):
-                origin_path = dsdt
-                got_origin = True
-                dsdt = os.path.join(dsdt,"DSDT.aml")
-            else:
-                print("No DSDT.aml in folder.")
+    def _table_name_is_valid(self, table_name):
+            if table_name.startswith(".") or not table_name.lower().endswith(self.table_suffixes):
                 return False
-        temp = tempfile.mkdtemp()
+            if not table_name.lower().startswith(self.table_prefixes):
+                return False
+            return True
+
+    def _table_signature(self, table_path, table_name = None):
+        path = os.path.join(table_path,table_name) if table_name else table_path
+        if not os.path.isfile(path):
+            return None
+        # Try to load it and read the first 4 bytes to verify the
+        # signature
+        with open(path,"rb") as f:
+            try:
+                sig = f.read(4)
+                if 2/3!=0: sig = sig.decode()
+                return sig
+            except:
+                pass
+        return None
+
+    def table_is_valid(self, table_path, table_name = None):
+        return self._table_signature(table_path,table_name=table_name) in self.allowed_signatures
+
+    def load(self, table_path):
+        # Attempt to load the passed file - or if a directory
+        # was passed, load all .aml and .dat files within
+        cwd = os.getcwd()
+        temp = None
+        target_files = {}
+        failed = []
         try:
-            if got_origin:
-                got_origin = False # Reset until we get an SSDT file copied
-                for x in os.listdir(origin_path):
-                    if x.startswith(".") or x.lower().startswith("ssdt-x") or not x.lower().endswith(".aml"):
-                        # Not needed - skip
-                        continue
-                    if x.lower().startswith("ssdt"):
-                        got_origin = True # Got at least one - nice
-                    shutil.copy(os.path.join(origin_path,x),temp)
-                dsdt_path = os.path.join(temp,"DSDT.aml")
+            if os.path.isdir(table_path):
+                # Got a directory - gather all files
+                # Gather valid files in the directory
+                valid_files = [x for x in os.listdir(table_path) if self.table_is_valid(table_path,x)]
+            elif os.path.isfile(table_path):
+                # Just loading the one table
+                valid_files = [table_path]
             else:
-                shutil.copy(dsdt,temp)
-                dsdt_path = os.path.join(temp,os.path.basename(dsdt))
-            dsdt_l_path = os.path.splitext(dsdt_path)[0]+".dsl"
+                # Not a valid path
+                raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), table_path)
+            if not valid_files:
+                # No valid files were found
+                raise FileNotFoundError(
+                    errno.ENOENT,
+                    os.strerror(errno.ENOENT),
+                    "No valid .aml/.dat files found at {}".format(table_path)
+                )
+            # Create a temp dir and copy all files there
+            temp = tempfile.mkdtemp()
+            for file in valid_files:
+                shutil.copy(
+                    os.path.join(table_path,file),
+                    temp
+                )
+            # Build a list of all target files in the temp folder - and save
+            # the disassembled_name for each to verify after
+            list_dir = os.listdir(temp)
+            for x in list_dir:
+                if len(list_dir) > 1 and not self.table_is_valid(temp,x):
+                    continue # Skip invalid files when multiple are passed
+                target_files[x] = {
+                    "assembled_name": os.path.basename(x),
+                    "disassembled_name": ".".join(x.split(".")[:-1]) + ".dsl",
+                }
+            if not target_files:
+                # Somehow we ended up with none?
+                raise FileNotFoundError(
+                    errno.ENOENT,
+                    os.strerror(errno.ENOENT),
+                    "No valid .aml/.dat files found at {}".format(table_path)
+                )
             os.chdir(temp)
-            if got_origin:
-                # Have at least one SSDT to use while decompiling
-                if sys.platform == "win32":
-                    out = self.r.run({"args":"{} -dl -l DSDT.aml SSDT*".format(self.iasl),"shell":True})
-                else:
-                    out = self.r.run({"args":"{} -da -dl -l DSDT.aml SSDT*".format(self.iasl),"shell":True})
-            else:
-                # Just the DSDT - might be incomplete though
-                if sys.platform == "win32":
-                    out = self.r.run({"args":[self.iasl,"-dl","-l",dsdt_path]})
-                else:
-                    out = self.r.run({"args":[self.iasl,"-da","-dl","-l",dsdt_path]})
-            if out[2] != 0 or not os.path.exists(dsdt_l_path):
-                raise Exception("Failed to decompile {}".format(os.path.basename(dsdt_path)))
-            with open(dsdt_l_path,"r") as f:
-                self.dsdt = f.read()
-                self.dsdt_lines = self.dsdt.split("\n")
-                self.get_scopes()
-                self.dsdt_paths = self.get_paths()
-            with open(dsdt_path,"rb") as f:
-                self.dsdt_raw = f.read()
+            # Generate and run a command
+            dsdt_or_ssdt = [x for x in list(target_files) if self._table_signature(temp,x) in self.mixed_listing]
+            other_tables = [x for x in list(target_files) if not x in dsdt_or_ssdt]
+            out_d = ("","",0)
+            out_t = ("","",0)
+
+            def exists(folder_path,file_name):
+                # Helper to make sure the file exists and has a non-Zero size
+                check_path = os.path.join(folder_path,file_name)
+                if os.path.isfile(check_path) and os.stat(check_path).st_size > 0:
+                    return True
+                return False
+            
+            # Check our DSDT and SSDTs first
+            if dsdt_or_ssdt:
+                args = [self.iasl,"-da","-dl","-l"]+list(dsdt_or_ssdt)
+                out_d = self.r.run({"args":args})
+                if out_d[2] != 0:
+                    # Attempt to run without `-da` if the above failed
+                    args = [self.iasl,"-dl","-l"]+list(dsdt_or_ssdt)
+                    out_d = self.r.run({"args":args})
+                # Get a list of disassembled names that failed
+                fail_temp = []
+                for x in dsdt_or_ssdt:
+                    if not exists(temp,target_files[x]["disassembled_name"]):
+                        fail_temp.append(x)
+                # Let's try to disassemble any that failed individually
+                for x in fail_temp:
+                    args = [self.iasl,"-dl","-l",x]
+                    self.r.run({"args":args})
+                    if not exists(temp,target_files[x]["disassembled_name"]):
+                        failed.append(x)
+            # Check for other tables (DMAR, APIC, etc)
+            if other_tables:
+                args = [self.iasl]+list(other_tables)
+                out_t = self.r.run({"args":args})
+                # Get a list of disassembled names that failed
+                for x in other_tables:
+                    if not exists(temp,target_files[x]["disassembled_name"]):
+                        failed.append(x)
+            if len(failed) == len(target_files):
+                raise Exception("Failed to disassemble - {}".format(", ".join(failed)))
+            # Actually process the tables now
+            to_remove = []
+            for file in target_files:
+                # We need to load the .aml and .dsl into memory
+                # and get the paths and scopes
+                if not exists(temp,target_files[file]["disassembled_name"]):
+                    to_remove.append(file)
+                    continue
+                with open(os.path.join(temp,target_files[file]["disassembled_name"]),"r") as f:
+                    target_files[file]["table"] = f.read()
+                    # Remove the compiler info at the start
+                    if target_files[file]["table"].startswith("/*"):
+                        target_files[file]["table"] = "*/".join(target_files[file]["table"].split("*/")[1:]).strip()
+                    # Check for "Table Header:" or "Raw Table Data: Length" and strip everything
+                    # after the last occurrence
+                    for h in ("\nTable Header:","\nRaw Table Data: Length"):
+                        if h in target_files[file]["table"]:
+                            target_files[file]["table"] = h.join(target_files[file]["table"].split(h)[:-1]).rstrip()
+                            break # Bail on the first match
+                    target_files[file]["lines"] = target_files[file]["table"].split("\n")
+                    target_files[file]["scopes"] = self.get_scopes(table=target_files[file])
+                    target_files[file]["paths"] = self.get_paths(table=target_files[file])
+                with open(os.path.join(temp,file),"rb") as f:
+                    table_bytes = f.read()
+                    target_files[file]["raw"] = table_bytes
+                    # Let's read the table header and get the info we need
+                    #
+                    # [0:4]   = Table Signature
+                    # [4:8]   = Length (little endian)
+                    # [8]     = Compliance Revision
+                    # [9]     = Checksum
+                    # [10:16] = OEM ID (6 chars, padded to the right with \x00)
+                    # [16:24] = Table ID (8 chars, padded to the right with \x00)
+                    # [24:28] = OEM Revision (little endian)
+                    # 
+                    target_files[file]["signature"] = table_bytes[0:4]
+                    target_files[file]["revision"]  = table_bytes[8]
+                    target_files[file]["oem"]       = table_bytes[10:16].rstrip(b"\x00")
+                    target_files[file]["id"]        = table_bytes[16:24].rstrip(b"\x00")
+                    target_files[file]["oem_revision"] = int(binascii.hexlify(table_bytes[24:28][::-1]),16)
+                    # Cast as int on py2, and decode bytes to strings on py3
+                    if 2/3==0:
+                        target_files[file]["revision"] = int(binascii.hexlify(target_files[file]["revision"]),16)
+                    else:
+                        for key in ("signature","oem","id"):
+                            target_files[file][key] = target_files[file][key].decode()
+                # The disassembler omits the last line of hex data in a mixed listing
+                # file... convenient.  However - we should be able to reconstruct this
+                # manually.
+                last_hex = next((l for l in target_files[file]["lines"][::-1] if self.is_hex(l)),None)
+                if last_hex:
+                    # Get the address left of the colon
+                    addr = int(last_hex.split(":")[0].strip(),16)
+                    # Get the hex bytes right of the colon
+                    hexs = last_hex.split(":")[1].split("//")[0].strip()
+                    # Increment the address by the number of hex bytes
+                    next_addr = addr+len(hexs.split())
+                    # Now we need to get the bytes at the end
+                    hexb = self.get_hex_bytes(hexs.replace(" ",""))
+                    # Get the last occurrence after the split
+                    remaining = target_files[file]["raw"].split(hexb)[-1]
+                    # Iterate in chunks of 16
+                    for chunk in [remaining[i:i+16] for i in range(0,len(remaining),16)]:
+                        # Build a new byte string
+                        hex_string = binascii.hexlify(chunk)
+                        # Decode the bytes if we're on python 3
+                        if 2/3!=0: hex_string = hex_string.decode()
+                        # Ensure the bytes are all upper case
+                        hex_string = hex_string.upper()
+                        l = "   {}: {}".format(
+                            hex(next_addr)[2:].upper().rjust(4,"0"),
+                            " ".join([hex_string[i:i+2] for i in range(0,len(hex_string),2)])
+                        )
+                        # Increment our address
+                        next_addr += len(chunk)
+                        # Append our line
+                        target_files[file]["lines"].append(l)
+                        target_files[file]["table"] += "\n"+l
+            # Remove any that didn't disassemble
+            for file in to_remove:
+                target_files.pop(file,None)
         except Exception as e:
             print(e)
-            ret = False
-        os.chdir(cwd)
-        shutil.rmtree(temp,ignore_errors=True)
-        return ret
+            return ({},failed)
+        finally:
+            os.chdir(cwd)
+            if temp: shutil.rmtree(temp,ignore_errors=True)
+        # Add/update any tables we loaded
+        for table in target_files:
+            self.acpi_tables[table] = target_files[table]
+        # Only return the newly loaded results
+        return (target_files, failed,)
 
     def get_latest_iasl(self):
         # Helper to scrape https://www.intel.com/content/www/us/en/developer/topic-technology/open/acpica/download.html for the latest
@@ -170,78 +319,59 @@ class DSDT:
                 print("   - Copying to {} directory".format(os.path.basename(script_dir)))
                 shutil.copy(os.path.join(search_dir,x), os.path.join(script_dir,x))
 
-    def dump_dsdt(self, output, decompile = True):
-        self.u.head("Dumping DSDT")
+    def dump_tables(self, output, disassemble=False):
+        # Helper to dump all ACPI tables to the specified
+        # output path
+        self.u.head("Dumping ACPI Tables")
         print("")
         res = self.check_output(output)
-        if sys.platform.startswith("linux"):
-            print("Checking if DSDT exists")
-            e = "/sys/firmware/acpi/tables/DSDT"
-            dsdt_path = os.path.join(res,"DSDT.aml")
-            if os.path.isfile(e):
-                print("Copying DSDT to safe location.")
-                print("You have to enter your password to copy the file:")
-                out = self.r.run({"args":["sudo", "cp", e, dsdt_path]})
-                if out[2] != 0:
-                    print(" - {}".format(out[1]))
-                print("Changing file ownership")
-                out = self.r.run({"args":["sudo", "chown", getpass.getuser(), dsdt_path]})
-                if out[2] != 0:
-                    print(" - {}".format(out[1]))
-                print("Success!")
-                if not decompile: # Not attempting to decompile it - just return the path
-                    return dsdt_path
-                if self.load(dsdt_path):
-                    self.u.grab("Press [enter] to return to main menu...")
-                    return dsdt_path
-                else:
-                    print("Loading file failed!")
-                    self.u.grab("Press [enter] to return to main menu...")
-                    return 
-            else:
-                print("Couldn't find DSDT table")
-                self.u.grab("Press [enter] to return to main menu...")
-                return 
-        elif sys.platform == "win32":
-            print("Dumping DSDT table")
+        if os.name == "nt":
             target = os.path.join(os.path.dirname(os.path.realpath(__file__)),"acpidump.exe")
-            dump = os.path.join(res,"dsdt.dat")
-            dsdt_path = os.path.join(res,"DSDT.aml")
             if os.path.exists(target):
                 # Dump to the target folder
+                print("Dumping tables to {}...".format(res))
                 cwd = os.getcwd()
                 os.chdir(res)
-                out = self.r.run({"args":[target, "-b", "-n", "dsdt"]})
+                out = self.r.run({"args":[target, "-b"]})
                 os.chdir(cwd)
                 if out[2] != 0:
                     print(" - {}".format(out[1]))
                     return
                 print("Dump successful!")
-                print("Moving DSDT to better location.")
-                shutil.move(dump,dsdt_path)
-                if not decompile: # Not attempting to decompile it - just return the path
-                    return dsdt_path
-                if self.load(dsdt_path):
-                    print("Success!")
-                    self.u.grab("Press [enter] to return to main menu...")
-                    return dsdt_path
-                else:
-                    print("Loading file failed!")
-                    self.u.grab("Press [enter] to return to main menu...")
-                    return 
+                if disassemble:
+                    return self.load(res)
+                return res
             else:
                 print("Failed to locate acpidump.exe")
-                self.u.grab("Press [enter] to return to main menu...")
-                return 
-        else:
-            print("Unsupported platform for DSDT dumping.")
-            self.u.grab("Press [enter] to return to main menu...")
-            return 
+                return
+        elif sys.platform.startswith("linux"):
+            table_dir = "/sys/firmware/acpi/tables"
+            if not os.path.isdir(table_dir):
+                print("Could not locate {}!".format(table_dir))
+                return
+            print("Copying tables to {}...".format(res))
+            copied_files = []
+            for table in os.listdir(table_dir):
+                if not os.path.isfile(os.path.join(table_dir,table)):
+                    continue # We only want files
+                target_path = os.path.join(res,table+".aml")
+                out = self.r.run({"args":["sudo","cp",os.path.join(table_dir,table),target_path]})
+                if out[2] != 0:
+                    print(" - {}".format(out[1]))
+                    return
+                out = self.r.run({"args":["sudo","chown",getpass.getuser(), target_path]})
+                if out[2] != 0:
+                    print(" - {}".format(out[1]))
+                    return
+            print("Dump successful!")
+            if disassemble:
+                return self.load(res)
+            return res
 
     def check_output(self, output):
         t_folder = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), output)
         if not os.path.isdir(t_folder):
-            os.mkdir(t_folder)
+            os.makedirs(t_folder)
         return t_folder
 
     def get_hex_from_int(self, total, pad_to = 4):
@@ -262,12 +392,34 @@ class DSDT:
     def get_hex_bytes(self, line):
         return binascii.unhexlify(line)
 
-    def find_previous_hex(self, index=0):
+    def get_table_with_id(self, table_id):
+        return next((v for k,v in self.acpi_tables.items() if table_id == v.get("id")),None)
+
+    def get_table_with_signature(self, table_sig):
+        return next((v for k,v in self.acpi_tables.items() if table_sig == v.get("signature")),None)
+    
+    def get_table(self, table_id_or_sig):
+        return next((v for k,v in self.acpi_tables.items() if table_id_or_sig in (v.get("signature"),v.get("id"))),None)
+
+    def get_dsdt(self):
+        return self.get_table_with_signature("DSDT")
+
+    def get_dsdt_or_only(self):
+        dsdt = self.get_dsdt()
+        if dsdt: return dsdt
+        # Make sure we have only one table
+        if len(self.acpi_tables) != 1:
+            return None
+        return list(self.acpi_tables.values())[0]
+
+    def find_previous_hex(self, index=0, table=None):
+        if not table: table = self.get_dsdt_or_only()
+        if not table: return ("",-1,-1)
         # Returns the index of the previous set of hex digits before the passed index
         start_index = -1
         end_index   = -1
         old_hex = True
-        for i,line in enumerate(self.dsdt_lines[index::-1]):
+        for i,line in enumerate(table.get("lines","")[index::-1]):
             if old_hex:
                 if not self.is_hex(line):
                     # Broke out of the old hex
@@ -276,16 +428,18 @@ class DSDT:
             # Not old_hex territory - check if we got new hex
             if self.is_hex(line): # Checks for a :, but not in comments
                 end_index = index-i
-                hex_text,start_index = self.get_hex_ending_at(end_index)
+                hex_text,start_index = self.get_hex_ending_at(end_index,table=table)
                 return (hex_text, start_index, end_index)
         return ("",start_index,end_index)
     
-    def find_next_hex(self, index=0):
+    def find_next_hex(self, index=0, table=None):
+        if not table: table = self.get_dsdt_or_only()
+        if not table: return ("",-1,-1)
         # Returns the index of the next set of hex digits after the passed index
         start_index = -1
         end_index   = -1
         old_hex = True
-        for i,line in enumerate(self.dsdt_lines[index:]):
+        for i,line in enumerate(table.get("lines","")[index:]):
             if old_hex:
                 if not self.is_hex(line):
                     # Broke out of the old hex
@@ -294,41 +448,47 @@ class DSDT:
             # Not old_hex territory - check if we got new hex
             if self.is_hex(line): # Checks for a :, but not in comments
                 start_index = i+index
-                hex_text,end_index = self.get_hex_starting_at(start_index)
+                hex_text,end_index = self.get_hex_starting_at(start_index,table=table)
                 return (hex_text, start_index, end_index)
         return ("",start_index,end_index)
 
     def is_hex(self, line):
-        return ":" in line.split("//")[0]
+        return ":" in line.split("//")[0] and all((x.lower() in "0123456789abcdef" for x in line.split(":")[0].strip()))
 
-    def get_hex_starting_at(self, start_index):
+    def get_hex_starting_at(self, start_index, table=None):
+        if not table: table = self.get_dsdt_or_only()
+        if not table: return ("",-1)
         # Returns a tuple of the hex, and the ending index
         hex_text = ""
         index = -1
-        for i,x in enumerate(self.dsdt_lines[start_index:]):
+        for i,x in enumerate(table.get("lines","")[start_index:]):
             if not self.is_hex(x):
                 break
             hex_text += self.get_hex(x)
             index = i+start_index
         return (hex_text, index)
 
-    def get_hex_ending_at(self, start_index):
+    def get_hex_ending_at(self, start_index, table=None):
+        if not table: table = self.get_dsdt_or_only()
+        if not table: return ("",-1)
         # Returns a tuple of the hex, and the ending index
         hex_text = ""
         index = -1
-        for i,x in enumerate(self.dsdt_lines[start_index::-1]):
+        for i,x in enumerate(table.get("lines","")[start_index::-1]):
             if not self.is_hex(x):
                 break
             hex_text = self.get_hex(x)+hex_text
             index = start_index-i
         return (hex_text, index)
 
-    def get_shortest_unique_pad(self, current_hex, index, instance=0):
-        try:    left_pad  = self.get_unique_pad(current_hex, index, False, instance)
+    def get_shortest_unique_pad(self, current_hex, index, instance=0, table=None):
+        if not table: table = self.get_dsdt_or_only()
+        if not table: return None
+        try:    left_pad  = self.get_unique_pad(current_hex, index, False, instance, table=table)
         except: left_pad  = None
-        try:    right_pad = self.get_unique_pad(current_hex, index, True, instance)
+        try:    right_pad = self.get_unique_pad(current_hex, index, True, instance, table=table)
         except: right_pad = None
-        try:    mid_pad   = self.get_unique_pad(current_hex, index, None, instance)
+        try:    mid_pad   = self.get_unique_pad(current_hex, index, None, instance, table=table)
         except: mid_pad   = None
         if left_pad == right_pad == mid_pad == None: raise Exception("No unique pad found!")
         # We got at least one unique pad
@@ -339,13 +499,15 @@ class DSDT:
                 min_pad = x
         return min_pad
 
-    def get_unique_pad(self, current_hex, index, direction=None, instance=0):
+    def get_unique_pad(self, current_hex, index, direction=None, instance=0, table=None):
+        if not table: table = self.get_dsdt_or_only()
+        if not table: raise Exception("No valid table passed!")
         # Returns any pad needed to make the passed patch unique
         # direction can be True = forward, False = backward, None = both
         start_index = index
-        line,last_index = self.get_hex_starting_at(index)
+        line,last_index = self.get_hex_starting_at(index,table=table)
         if not current_hex in line:
-            raise Exception("{} not found in DSDT at index {}-{}!".format(current_hex,start_index,last_index))
+            raise Exception("{} not found in table at index {}-{}!".format(current_hex,start_index,last_index))
         padl = padr = ""
         parts = line.split(current_hex)
         if instance >= len(parts)-1:
@@ -356,13 +518,13 @@ class DSDT:
         while True:
             # Check if our hex string is unique
             check_bytes = self.get_hex_bytes(padl+current_hex+padr)
-            if self.dsdt_raw.count(check_bytes) == 1: # Got it!
+            if table["raw"].count(check_bytes) == 1: # Got it!
                 break
             if direction == True or (direction == None and len(padr)<=len(padl)):
                 # Let's check a forward byte
                 if not len(liner):
                     # Need to grab more
-                    liner, _index, last_index = self.find_next_hex(last_index)
+                    liner, _index, last_index = self.find_next_hex(last_index, table=table)
                     if last_index == -1: raise Exception("Hit end of file before unique hex was found!")
                 padr  = padr+liner[0:2]
                 liner = liner[2:]
@@ -371,7 +533,7 @@ class DSDT:
                 # Let's check a backward byte
                 if not len(linel):
                     # Need to grab more
-                    linel, start_index, _index = self.find_previous_hex(start_index)
+                    linel, start_index, _index = self.find_previous_hex(start_index, table=table)
                     if _index == -1: raise Exception("Hit end of file before unique hex was found!")
                 padl  = linel[-2:]+padl
                 linel = linel[:-2]
@@ -379,14 +541,16 @@ class DSDT:
             break
         return (padl,padr)
     
-    def get_devices(self,search=None,types=("Device (","Scope ("),strip_comments=False):
+    def get_devices(self,search=None,types=("Device (","Scope ("),strip_comments=False,table=None):
+        if not table: table = self.get_dsdt_or_only()
+        if not table: return []
         # Returns a list of tuples organized as (Device/Scope,d_s_index,matched_index)
         if search == None:
             return []
         last_device = None
         device_index = 0
         devices = []
-        for index,line in enumerate(self.dsdt_lines):
+        for index,line in enumerate(table.get("lines","")):
             if self.is_hex(line):
                 continue
             line = self.get_line(line) if strip_comments else line
@@ -399,12 +563,14 @@ class DSDT:
                 devices.append((last_device,device_index,index))
         return devices
 
-    def get_scope(self,starting_index=0,add_hex=False,strip_comments=False):
+    def get_scope(self,starting_index=0,add_hex=False,strip_comments=False,table=None):
+        if not table: table = self.get_dsdt_or_only()
+        if not table: return []
         # Walks the scope starting at starting_index, and returns when
         # we've exited
         brackets = None
         scope = []
-        for line in self.dsdt_lines[starting_index:]:
+        for line in table.get("lines","")[starting_index:]:
             if self.is_hex(line):
                 if add_hex:
                     scope.append(line)
@@ -421,50 +587,57 @@ class DSDT:
                 return scope
         return scope
 
-    def get_scopes(self):
-        self.dsdt_scope = []
-        for index,line in enumerate(self.dsdt_lines):
+    def get_scopes(self, table=None):
+        if not table: table = self.get_dsdt_or_only()
+        if not table: return []
+        scopes = []
+        for index,line in enumerate(table.get("lines","")):
             if self.is_hex(line): continue
             if any(x in line for x in ("Processor (","Scope (","Device (","Method (","Name (")):
-                self.dsdt_scope.append((line,index))
-        return self.dsdt_scope
+                scopes.append((line,index))
+        return scopes
 
-    def get_paths(self):
-        if not self.dsdt_scope: self.get_scopes()
+    def get_paths(self, table=None):
+        if not table: table = self.get_dsdt_or_only()
+        if not table: return []
         starting_indexes = []
-        for index,scope in enumerate(self.dsdt_scope):
+        for index,scope in enumerate(table.get("scopes",[])):
             if not scope[0].strip().startswith(("Processor (","Device (","Method (","Name (")): continue
             # Got a device - add its index
             starting_indexes.append(index)
-        if not len(starting_indexes): return None
+        if not len(starting_indexes):
+            return starting_indexes
         paths = []
         for x in starting_indexes:
-            paths.append(self.get_path_starting_at(x))
+            paths.append(self.get_path_starting_at(x, table=table))
         return sorted(paths)
 
-    def get_path_of_type(self, obj_type="Device", obj="HPET"):
+    def get_path_of_type(self, obj_type="Device", obj="HPET", table=None):
+        if not table: table = self.get_dsdt_or_only()
+        if not table: return []
         paths = []
-        for path in self.dsdt_paths:
+        for path in table.get("paths",[]):
             if path[2].lower() == obj_type.lower() and path[0].upper().endswith(obj.upper()):
                 paths.append(path)
         return sorted(paths)
 
-    def get_device_paths(self, obj="HPET"):
-        return self.get_path_of_type(obj_type="Device",obj=obj)
+    def get_device_paths(self, obj="HPET",table=None):
+        return self.get_path_of_type(obj_type="Device",obj=obj,table=table)
 
-    def get_method_paths(self, obj="_STA"):
-        return self.get_path_of_type(obj_type="Method",obj=obj)
+    def get_method_paths(self, obj="_STA",table=None):
+        return self.get_path_of_type(obj_type="Method",obj=obj,table=table)
 
-    def get_name_paths(self, obj="CPU0"):
-        return self.get_path_of_type(obj_type="Name",obj=obj)
+    def get_name_paths(self, obj="CPU0",table=None):
+        return self.get_path_of_type(obj_type="Name",obj=obj,table=table)
 
-    def get_processor_paths(self, obj="Processor"):
-        return self.get_path_of_type(obj_type="Processor",obj=obj)
+    def get_processor_paths(self, obj_type="Processor",table=None):
+        return self.get_path_of_type(obj_type=obj_type,obj="",table=table)
 
-    def get_device_paths_with_hid(self, hid="ACPI000E"):
-        if not self.dsdt_scope: self.get_scopes()
+    def get_device_paths_with_hid(self, hid="ACPI000E", table=None):
+        if not table: table = self.get_dsdt_or_only()
+        if not table: return []
         starting_indexes = []
-        for index,line in enumerate(self.dsdt_lines):
+        for index,line in enumerate(table.get("lines","")):
             if self.is_hex(line): continue
             if hid.upper() in line.upper():
                 starting_indexes.append(index)
@@ -472,11 +645,11 @@ class DSDT:
         devices = []
         for i in starting_indexes:
             # Walk backwards and get the next parent device
-            pad = len(self.dsdt_lines[i]) - len(self.dsdt_lines[i].lstrip(" "))
-            for sub,line in enumerate(self.dsdt_lines[i::-1]):
+            pad = len(table.get("lines","")[i]) - len(table.get("lines","")[i].lstrip(" "))
+            for sub,line in enumerate(table.get("lines","")[i::-1]):
                 if "Device (" in line and len(line)-len(line.lstrip(" ")) < pad:
                     # Add it if it's already in our dsdt_paths - if not, add the current line
-                    device = next((x for x in self.dsdt_paths if x[1]==i-sub),None)
+                    device = next((x for x in table.get("paths",[]) if x[1]==i-sub),None)
                     if device: devices.append(device)
                     else: devices.append((line,i-sub))
                     break
@@ -486,13 +659,14 @@ class DSDT:
         # Replaces Name, Processor, Device, and Method with Scope for splitting purposes
         return line.replace("Name","Scope").replace("Processor","Scope").replace("Device","Scope").replace("Method","Scope")
 
-    def get_path_starting_at(self, starting_index=0):
-        if not self.dsdt_scope: self.get_scopes()
+    def get_path_starting_at(self, starting_index=0, table=None):
+        if not table: table = self.get_dsdt_or_only()
+        if not table: return ("","","")
         # Walk the scope backwards, keeping track of changes
         pad = None
         path = []
-        obj_type = next((x for x in ("Processor","Method","Scope","Device","Name") if x+" (" in self.dsdt_scope[starting_index][0]),"Unknown Type")
-        for scope,original_index in self.dsdt_scope[starting_index::-1]:
+        obj_type = next((x for x in ("Processor","Method","Scope","Device","Name") if x+" (" in table.get("scopes",[])[starting_index][0]),"Unknown Type")
+        for scope,original_index in table.get("scopes",[])[starting_index::-1]:
             new_pad = self._normalize_types(scope).split("Scope (")[0]
             if pad == None or new_pad < pad:
                 pad = new_pad
@@ -511,4 +685,4 @@ class DSDT:
             path = new_path
         path = ".".join(path)
         path = "\\"+path if path[0] != "\\" else path
-        return (path, self.dsdt_scope[starting_index][1], obj_type)
+        return (path, table.get("scopes",[])[starting_index][1], obj_type)
