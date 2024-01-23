@@ -13,6 +13,10 @@ target="${script%.*}.py"
 #   FORCE = Use py3
 use_py3="TRUE"
 
+# We'll parse if the first argument passed is
+# --install-python and if so, we'll just install
+just_installing="FALSE"
+
 tempdir=""
 
 compare_to_version () {
@@ -104,6 +108,7 @@ download_py () {
     fi
     echo
     echo "Running python install package..."
+    echo
     sudo installer -pkg "$tempdir/python.pkg" -target /
     if [ "$?" != "0" ]; then
         echo
@@ -111,23 +116,36 @@ download_py () {
         echo
         exit $?
     fi
-    echo
+    # Now we expand the package and look for a shell update script
+    pkgutil --expand "$tempdir/python.pkg" "$tempdir/python"
+    if [ -e "$tempdir/python/Python_Shell_Profile_Updater.pkg/Scripts/postinstall" ]; then
+        # Run the script
+        echo
+        echo "Updating PATH..."
+        echo
+        "$tempdir/python/Python_Shell_Profile_Updater.pkg/Scripts/postinstall"
+    fi
     vers_folder="Python $(echo "$vers" | cut -d'.' -f1 -f2)"
     if [ -f "/Applications/$vers_folder/Install Certificates.command" ]; then
         # Certs script exists - let's execute that to make sure our certificates are updated
+        echo
         echo "Updating Certificates..."
         echo
         "/Applications/$vers_folder/Install Certificates.command"
-        echo 
     fi
+    echo
     echo "Cleaning up..."
     cleanup
     echo
-    # Now we check for py again
-    echo "Rechecking py..."
-    downloaded="TRUE"
-    clear
-    main
+    if [ "$just_installing" == "TRUE" ]; then
+        echo "Done."
+    else
+        # Now we check for py again
+        echo "Rechecking py..."
+        downloaded="TRUE"
+        clear
+        main
+    fi
 }
 
 cleanup () {
@@ -298,4 +316,9 @@ downloaded="FALSE"
 # our OS version is 10.15 or greater.
 check_py3_stub="$(compare_to_version "3" "10.15")"
 trap cleanup EXIT
-main
+if [ "$1" == "--install-python" ]; then
+    just_installing="TRUE"
+    download_py
+else
+    main
+fi
