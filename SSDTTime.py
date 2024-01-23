@@ -2767,6 +2767,21 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
                 reserved = False
             # Only append if we're not in a reserved memory region
             if not reserved:
+                # Ensure any digits in Reserved : XX fields are 0s
+                if "Reserved : " in line:
+                    res,value = line.split(" : ")
+                    new_val = ""
+                    for i,char in enumerate(value):
+                        if not char in " 0123456789ABCDEF":
+                            # Hit something else - dump the rest as-is into the val
+                            new_val += value[i:]
+                            break
+                        elif char not in ("0"," "):
+                            # Ensure we 0 out all non-0, non-space values
+                            char = "0"
+                        # Append the character
+                        new_val += char
+                    line = "{} : {}".format(res,new_val)
                 new_dmar.append(line)
         if not got_sig:
             print(" - Not found, does not appear to be a valid DMAR table.")
