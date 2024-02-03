@@ -30,11 +30,18 @@ call :getsyspath "syspath"
 
 REM Make sure the syspath exists
 if "!syspath!" == "" (
+    set /a gotpath=0
     if exist "%SYSTEMROOT%\system32\cmd.exe" (
-        REM Fall back on the default path if it exists
-        set "ComSpec=%SYSTEMROOT%\system32\cmd.exe"
-        set "syspath=%SYSTEMROOT%\system32\"
-    ) else (
+        if exist "%SYSTEMROOT%\system32\reg.exe" (
+            if exist "%SYSTEMROOT%\system32\where.exe" (
+                REM Fall back on the default path if it exists
+                set "ComSpec=%SYSTEMROOT%\system32\cmd.exe"
+                set "syspath=%SYSTEMROOT%\system32\"
+                set /a gotpath=1
+            )
+        )
+    )
+    if !gotpath! lss 1 (
         cls
         echo   ###     ###
         echo  # Warning #
