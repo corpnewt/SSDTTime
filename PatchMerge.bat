@@ -57,18 +57,20 @@ if not exist "!thisDir!\!script_name!" (
 goto checkpy
 
 :getsyspath <variable_name>
-REM Helper method to return the "proper" path to cmd.exe, reg.exe, and where.exe by walking the ComSpec var
-REM Will also repair the ComSpec var in memory if need be
+REM Helper method to return a valid path to cmd.exe, reg.exe, and where.exe by
+REM walking the ComSpec var - will also repair it in memory if need be
 REM Strip double semi-colons
 call :undouble "syspath" "%ComSpec%" ";"
 
-REM Prep the LF variable to use the "line feed" approach
+REM Dirty hack to leverage the "line feed" approach - there are some odd side
+REM effects with this.  Do not use this variable name in comments near this
+REM line - as it seems to behave erradically.
 (set LF=^
 %=this line is empty=%
 )
 REM Replace instances of semi-colons with a line feed and wrap
 REM in parenthesis to work around some strange batch behavior
-(set "testpath=%syspath:;=!LF!%")
+set "testpath=%syspath:;=!LF!%"
 
 REM Let's walk each path and test if cmd.exe, reg.exe, and where.exe exist there
 set /a found=0
