@@ -125,7 +125,6 @@ set "string_value=%~2"
 :undouble_continue
 set "check=!string_value:%~3%~3=%~3!"
 if not "!check!" == "!string_value!" (
-    set "%~1=!check!"
     set "string_value=!check!"
     goto :undouble_continue
 )
