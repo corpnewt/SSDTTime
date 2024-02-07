@@ -1,5 +1,5 @@
-from Scripts import *
-import getpass, os, tempfile, shutil, plistlib, sys, binascii, zipfile, re, string, json
+from Scripts import downloader, dsdt, plist, reveal, run, utils
+import getpass, os, tempfile, shutil, plistlib, sys, binascii, zipfile, re, string, json, textwrap
 
 class SSDT:
     def __init__(self, **kwargs):
@@ -27,6 +27,7 @@ class SSDT:
             self.w = 120
             self.h = 30
         self.iasl_legacy = False
+        self.resize_window = True
         self.dsdt = None
         self.settings = os.path.join(os.path.dirname(os.path.realpath(__file__)),"Scripts","settings.json")
         if os.path.exists(self.settings):
@@ -78,12 +79,19 @@ class SSDT:
                 "Comment" :"GPP6._PRW to XPRW to fix ASRock's Mistake",
                 "Find"    :"47505036085F4144520C04000200140F5F505257",
                 "Replace" :"47505036085F4144520C04000200140F58505257"
+            },
+            {
+                "PrePatch":"GPP1 duplicate PTXH devices",
+                "Comment" :"GPP1.PTXH to XTXH to fix MSI's Mistake",
+                "Find"    :"50545848085F41445200140F",
+                "Replace" :"58545848085F41445200140F"
             }
         )
 
     def save_settings(self):
         settings = {
-            "legacy_compiler": self.iasl_legacy
+            "legacy_compiler": self.iasl_legacy,
+            "resize_window": self.resize_window
         }
         try: json.dump(settings,open(self.settings,"w"),indent=2)
         except: return
@@ -93,6 +101,7 @@ class SSDT:
             settings = json.load(open(self.settings))
             if self.d.iasl_legacy: # Only load the legacy compiler setting if we can
                 self.iasl_legacy = settings.get("legacy_compiler",False)
+            self.resize_window = settings.get("resize_window",True)
         except: return
 
     def get_unique_name(self,name,target_folder,name_append="-Patched"):
@@ -113,63 +122,185 @@ class SSDT:
                 return check_name
             num += 1 # Increment our counter
 
-    def load_dsdt(self,path):
-        self.u.head("Loading DSDT")
+    def sorted_nicely(self, l): 
+        convert = lambda text: int(text) if text.isdigit() else text 
+        alphanum_key = lambda key: [ convert(c) for c in re.split('([0-9]+)', key.lower()) ] 
+        return sorted(l, key = alphanum_key)
+
+    def load_dsdt(self, path):
+        if not path:
+            return
+        self.u.head("Loading ACPI Table(s)")
         print("")
-        print("Loading {}...".format(path))
-        print("")
-        if not os.path.isfile(path):
-            print("File does not exist!")
+        tables = []
+        trouble_dsdt = None
+        fixed = False
+        temp = None
+        prior_tables = self.d.acpi_tables # Retain in case of failure
+        # Clear any existing tables so we load anew
+        self.d.acpi_tables = {}
+        if os.path.isdir(path):
+            print("Gathering valid tables from {}...\n".format(os.path.basename(path)))
+            for t in self.sorted_nicely(os.listdir(path)):
+                if self.d.table_is_valid(path,t):
+                    print(" - {}".format(t))
+                    tables.append(t)
+            if not tables:
+                # Check if there's an ACPI directory within the passed
+                # directory - this may indicate SysReport was dropped
+                if os.path.isdir(os.path.join(path,"ACPI")):
+                    # Rerun this function with that updated path
+                    return self.load_dsdt(os.path.join(path,"ACPI"))
+                print(" - No valid .aml files were found!")
+                print("")
+                self.u.grab("Press [enter] to return...")
+                # Restore any prior tables
+                self.d.acpi_tables = prior_tables
+                return
+            print("")
+            # We got at least one file - let's look for the DSDT specifically
+            # and try to load that as-is.  If it doesn't load, we'll have to
+            # manage everything with temp folders
+            dsdt_list = [x for x in tables if self.d._table_signature(path,x) == "DSDT"]
+            if len(dsdt_list) > 1:
+                print("Multiple files with DSDT signature passed:")
+                for d in self.sorted_nicely(dsdt_list):
+                    print(" - {}".format(d))
+                print("\nOnly one is allowed at a time.  Please remove one of the above and try again.")
+                print("")
+                self.u.grab("Press [enter] to return...")
+                # Restore any prior tables
+                self.d.acpi_tables = prior_tables
+                return
+            # Get the DSDT, if any
+            dsdt = dsdt_list[0] if len(dsdt_list) else None
+            if dsdt: # Try to load it and see if it causes problems
+                print("Disassembling {} to verify if pre-patches are needed...".format(dsdt))
+                if not self.d.load(os.path.join(path,dsdt))[0]:
+                    trouble_dsdt = dsdt
+                else:
+                    print("\nDisassembled successfully!\n")
+        elif os.path.isfile(path):
+            print("Loading {}...".format(os.path.basename(path)))
+            if self.d.load(path)[0]:
+                print("\nDone.")
+                # If it loads fine - just return the path
+                # to the parent directory
+                return os.path.dirname(path)
+            if not self.d._table_signature(path) == "DSDT":
+                # Not a DSDT, we aren't applying pre-patches
+                print("\n{} could not be disassembled!".format(os.path.basename(path)))
+                print("")
+                self.u.grab("Press [enter] to return...")
+                # Restore any prior tables
+                self.d.acpi_tables = prior_tables
+                return
+            # It didn't load - set it as the trouble file
+            trouble_dsdt = os.path.basename(path)
+            # Put the table in the tables list, and adjust
+            # the path to represent the parent dir
+            tables.append(os.path.basename(path))
+            path = os.path.dirname(path)
+        else:
+            print("Passed file/folder does not exist!")
             print("")
             self.u.grab("Press [enter] to return...")
-        if self.d.load(path): return path
-        # Didn't load
-        print("Checking available pre-patches...")
-        print("Loading {} into memory...".format(os.path.basename(path)))
-        with open(path,"rb") as f:
-            d = f.read()
-        res = self.d.check_output(self.output)
-        target_name = self.get_unique_name(os.path.basename(path),res,name_append="-Patched")
-        target_path = os.path.join(res,target_name)
-        patches = []
-        print("Iterating patches...")
-        for p in self.pre_patches:
-            if not all((x in p for x in ("PrePatch","Comment","Find","Replace"))): continue
-            print(" - {}".format(p["PrePatch"]))
-            find = binascii.unhexlify(p["Find"])
-            if d.count(find) == 1:
-                patches.append(p) # Retain the patch
-                repl = binascii.unhexlify(p["Replace"])
-                print(" --> Located - applying...")
-                d = d.replace(find,repl) # Replace it in memory
-                with open(target_path,"wb") as f:
-                    f.write(d) # Write the updated file
-                # Attempt to load again
-                if self.d.load(target_path):
-                    # We got it to load - let's write the patches
-                    print("\nDecompiled successfully!\n")
-                    self.make_plist(None, None, patches)
-                    print("\n!! Patches applied to modified file in Results folder:\n   {}".format(target_name))
-                    self.patch_warn()
-                    self.u.grab("Press [enter] to continue...")
-                    return path
-        # No patches worked - write the original back
-        if os.path.exists(target_path):
-            print("Removing patched file...")
-            try: os.remove(target_path)
-            except: print(" - Failed to remove!")
-        print("\n{} could not be decompiled!".format(os.path.basename(path)))
-        print("")
-        self.u.grab("Press [enter] to return...")
+            # Restore any prior tables
+            self.d.acpi_tables = prior_tables
+            return
+        # If we got here - check if we have a trouble_dsdt.
+        if trouble_dsdt:
+            # We need to move our ACPI files to a temp folder
+            # then try patching the DSDT there
+            temp = tempfile.mkdtemp()
+            for table in tables:
+                shutil.copy(
+                    os.path.join(path,table),
+                    temp
+                )
+            # Get a reference to the new trouble file
+            trouble_path = os.path.join(temp,trouble_dsdt)
+            # Now we try patching it
+            print("Checking available pre-patches...")
+            print("Loading {} into memory...".format(trouble_dsdt))
+            with open(trouble_path,"rb") as f:
+                d = f.read()
+            res = self.d.check_output(self.output)
+            target_name = self.get_unique_name(trouble_dsdt,res,name_append="-Patched")
+            patches = []
+            print("Iterating patches...\n")
+            for p in self.pre_patches:
+                if not all((x in p for x in ("PrePatch","Comment","Find","Replace"))): continue
+                print(" - {}".format(p["PrePatch"]))
+                find = binascii.unhexlify(p["Find"])
+                if d.count(find) == 1:
+                    patches.append(p) # Retain the patch
+                    repl = binascii.unhexlify(p["Replace"])
+                    print(" --> Located - applying...")
+                    d = d.replace(find,repl) # Replace it in memory
+                    with open(trouble_path,"wb") as f:
+                        f.write(d) # Write the updated file
+                    # Attempt to load again
+                    if self.d.load(trouble_path)[0]:
+                        fixed = True
+                        # We got it to load - let's write the patches
+                        print("\nDisassembled successfully!\n")
+                        self.make_plist(None, None, patches)
+                        # Save to the local file
+                        with open(os.path.join(res,target_name),"wb") as f:
+                            f.write(d)
+                        print("\n!! Patches applied to modified file in Results folder:\n   {}".format(target_name))
+                        self.patch_warn()
+                        break
+            if not fixed:
+                print("\n{} could not be disassembled!".format(trouble_dsdt))
+                print("")
+                self.u.grab("Press [enter] to return...")
+                if temp:
+                    shutil.rmtree(temp,ignore_errors=True)
+                # Restore any prior tables
+                self.d.acpi_tables = prior_tables
+                return
+        # Let's load the rest of the tables
+        if len(tables) > 1:
+            print("Loading valid tables in {}...".format(path))
+        loaded_tables,failed = self.d.load(temp or path)
+        if not loaded_tables or failed:
+            print("\nFailed to load tables in {}{}\n".format(
+                os.path.dirname(path) if os.path.isfile(path) else path,
+                ":" if failed else ""
+            ))
+            for t in self.sorted_nicely(failed):
+                print(" - {}".format(t))
+            # Restore any prior tables
+            if not loaded_tables:
+                self.d.acpi_tables = prior_tables
+        else:
+            if len(tables) > 1:
+                print("") # Newline for readability
+            print("Done.")
+        # If we had to patch the DSDT, or if not all tables loaded,
+        # make sure we get interaction from the user to continue
+        if trouble_dsdt or not loaded_tables or failed:
+            print("")
+            self.u.grab("Press [enter] to continue...")
+        if temp:
+            shutil.rmtree(temp,ignore_errors=True)
+        return path
 
-    def select_dsdt(self):
+    def select_dsdt(self, single_table=False):
         while True:
-            self.u.head("Select DSDT")
+            self.u.head("Select ACPI Table{}".format("" if single_table else "s"))
             print(" ")
             print("M. Main")
             print("Q. Quit")
             print(" ")
-            dsdt = self.u.grab("Please drag and drop a DSDT.aml or origin folder here:  ")
+            if single_table:
+                print("NOTE:  The function requesting this table expects either a single table, or one")
+                print("       with the DSDT signature.  If neither condition is met, you will be")
+                print("       returned to the main menu.")
+                print("")
+            dsdt = self.u.grab("Please drag and drop an ACPI table or folder of tables here:  ")
             if dsdt.lower() == "m":
                 return self.dsdt
             if dsdt.lower() == "q":
@@ -179,13 +310,17 @@ class SSDT:
             # Got a DSDT, try to load it
             return self.load_dsdt(out)
 
-    def ensure_dsdt(self):
-        if self.dsdt and self.d.dsdt:
+    def _ensure_dsdt(self, allow_any=False):
+        # Helper to check conditions for when we have valid tables
+        return self.dsdt and ((allow_any and self.d.acpi_tables) or (not allow_any and self.d.get_dsdt_or_only()))
+
+    def ensure_dsdt(self, allow_any=False):
+        if self._ensure_dsdt(allow_any=allow_any):
             # Got it already
             return True
         # Need to prompt
-        self.dsdt = self.select_dsdt()
-        if self.dsdt and self.d.dsdt:
+        self.dsdt = self.select_dsdt(single_table=not allow_any)
+        if self._ensure_dsdt(allow_any=allow_any):
             return True
         return False
 
@@ -439,19 +574,24 @@ DefinitionBlock ("", "SSDT", 2, "CORP ", "SsdtEC", 0x00001000)
         self.u.grab("Press [enter] to return...")
 
     def plugin_type(self):
-        if not self.ensure_dsdt():
+        if not self.ensure_dsdt(allow_any=True):
             return
         self.u.head("Plugin Type")
         print("")
-        ssdt_name = "SSDT-PLUG"
         print("Determining CPU name scheme...")
-        try: cpu_name = self.d.get_processor_paths("")[0][0]
-        except: cpu_name = None
-        if cpu_name:
-            print(" - Found {}".format(cpu_name))
-            oc = {"Comment":"Sets plugin-type to 1 on first Processor object","Enabled":True,"Path":ssdt_name+".aml"}
-            print("Creating SSDT-PLUG...")
-            ssdt = """//
+        for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
+            ssdt_name = "SSDT-PLUG"
+            table = self.d.acpi_tables[table_name]
+            if not table.get("signature","").lower() in ("dsdt","ssdt"):
+                continue # We're not checking data tables
+            print(" Checking {}...".format(table_name))
+            try: cpu_name = self.d.get_processor_paths(table=table)[0][0]
+            except: cpu_name = None
+            if cpu_name:
+                print(" - Found Processor: {}".format(cpu_name))
+                oc = {"Comment":"Sets plugin-type to 1 on first Processor object","Enabled":True,"Path":ssdt_name+".aml"}
+                print("Creating SSDT-PLUG...")
+                ssdt = """//
 // Based on the sample found at https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/SSDT-PLUG.dsl
 //
 DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
@@ -478,39 +618,36 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
         }
     }
 }""".replace("[[CPUName]]",cpu_name)
-        else:
-            ssdt_name += "-ALT"
-            print("No Processor objects found...")
-            print("Checking for ACPI0007 devices...")
-            procs = self.d.get_device_paths_with_hid(hid="ACPI0007")
-            if not procs:
-                print("Could not find any Processor objects or ACPI0007 devices!")
-                print("")
-                self.u.grab("Press [enter] to return...")
-                return
-            parent = procs[0][0].split(".")[0]
-            print("Got {:,} with parent {}, iterating...".format(len(procs),parent))
-            proc_list = []
-            for proc in procs:
-                print(" - Checking {}...".format(proc[0].split(".")[-1]))
-                uid = self.d.get_path_of_type(obj_type="Name",obj=proc[0]+"._UID")
-                if not uid:
-                    print(" --> Not found!  Skipping...")
+            else:
+                ssdt_name += "-ALT"
+                print(" - No Processor objects found...")
+                procs = self.d.get_device_paths_with_hid(hid="ACPI0007",table=table)
+                if not procs:
+                    print(" - No ACPI0007 devices found...")
                     continue
-                # Let's get the actual _UID value
-                try:
-                    _uid = self.d.dsdt_lines[uid[0][1]].split("_UID, ")[1].split(")")[0]
-                    print(" --> _UID: {}".format(_uid))
-                    proc_list.append((proc[0],_uid))
-                except:
-                    print(" --> Not found!  Skipping...")
-            if not proc_list:
-                print("No valid processor devices found!  Aborting...")
-                print("")
-                self.u.grab("Press [enter] to return...")
-                return
-            print("Iterating {:,} valid processor device{}...".format(len(proc_list),"" if len(proc_list)==1 else "s"))
-            ssdt = """//
+                print(" - Located {:,} ACPI0007 device{}".format(
+                    len(procs), "" if len(procs)==1 else "s"
+                ))
+                parent = procs[0][0].split(".")[0]
+                print(" - Got parent at {}, iterating...".format(parent))
+                proc_list = []
+                for proc in procs:
+                    print(" - Checking {}...".format(proc[0].split(".")[-1]))
+                    uid = self.d.get_path_of_type(obj_type="Name",obj=proc[0]+"._UID",table=table)
+                    if not uid:
+                        print(" --> Not found!  Skipping...")
+                        continue
+                    # Let's get the actual _UID value
+                    try:
+                        _uid = table["lines"][uid[0][1]].split("_UID, ")[1].split(")")[0]
+                        print(" --> _UID: {}".format(_uid))
+                        proc_list.append((proc[0],_uid))
+                    except:
+                        print(" --> Not found!  Skipping...")
+                if not proc_list:
+                    continue
+                print("Iterating {:,} valid processor device{}...".format(len(proc_list),"" if len(proc_list)==1 else "s"))
+                ssdt = """//
 // Based on the sample found at https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/Source/SSDT-PLUG-ALT.dsl
 //
 DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
@@ -519,12 +656,12 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
 
     Scope ([[parent]])
     {""".replace("[[parent]]",parent)
-            # Walk the processor objects, and add them to the SSDT
-            for i,proc_uid in enumerate(proc_list):
-                proc,uid = proc_uid
-                adr = hex(i)[2:].upper()
-                name = "CP00"[:-len(adr)]+adr
-                ssdt+="""
+                # Walk the processor objects, and add them to the SSDT
+                for i,proc_uid in enumerate(proc_list):
+                    proc,uid = proc_uid
+                    adr = hex(i)[2:].upper()
+                    name = "CP00"[:-len(adr)]+adr
+                    ssdt+="""
         Processor ([[name]], [[uid]], 0x00000510, 0x06)
         {
             // [[proc]]
@@ -541,8 +678,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                     Return (Zero)
                 }
             }""".replace("[[name]]",name).replace("[[uid]]",uid).replace("[[proc]]",proc)
-                if i == 0: # Got the first, add plugin-type as well
-                    ssdt += """
+                    if i == 0: # Got the first, add plugin-type as well
+                        ssdt += """
             Method (_DSM, 4, NotSerialized)
             {
                 If (LNot (Arg2)) {
@@ -556,18 +693,24 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                 })
             }"""
                 # Close up the SSDT
-                ssdt += """
+                    ssdt += """
         }"""
-            ssdt += """
+                ssdt += """
     }
 }"""
-            oc = {"Comment":"Redefines modern CPU Devices as legacy Processor objects and sets plugin-type to 1 on the first","Enabled":True,"Path":ssdt_name+".aml"}
-        self.make_plist(oc, ssdt_name+".aml", ())
-        self.write_ssdt(ssdt_name,ssdt)
+                oc = {"Comment":"Redefines modern CPU Devices as legacy Processor objects and sets plugin-type to 1 on the first","Enabled":True,"Path":ssdt_name+".aml"}
+            self.make_plist(oc, ssdt_name+".aml", ())
+            self.write_ssdt(ssdt_name,ssdt)
+            print("")
+            print("Done.")
+            self.patch_warn()
+            self.u.grab("Press [enter] to return...")
+            return
+        # If we got here - we reached the end
+        print("No valid processor devices found!")
         print("")
-        print("Done.")
-        self.patch_warn()
         self.u.grab("Press [enter] to return...")
+        return
 
     def list_irqs(self):
         # Walks the DSDT keeping track of the current device and
@@ -578,7 +721,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         irq = False
         last_irq = False
         irq_index = 0
-        for index,line in enumerate(self.d.dsdt_lines):
+        for index,line in enumerate(self.d.get_dsdt_or_only()["lines"]):
             if self.d.is_hex(line):
                 # Skip all hex lines
                 continue
@@ -686,15 +829,15 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         return total
 
     def get_all_irqs(self, irq):
-        irq_list = []
+        irq_list = set()
         for a in irq.split("-"):
             i = a.split("|")[1]
             for x in i.split(":"):
                 for y in x.split(","):
                     if y == "#":
                         continue
-                    irq_list.append(int(y))
-        return irq_list
+                    irq_list.add(int(y))
+        return sorted(list(irq_list))
 
     def get_data(self, data):
         if sys.version_info >= (3, 0):
@@ -756,50 +899,53 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         names_and_hids = ["PIC","IPIC","TMR","TIMR","RTC","RTC0","RTC1","PNPC0000","PNP0100","PNP0B00"]
         defaults = [x for x in irqs if x.upper() in names_and_hids or irqs[x].get("hid","").upper() in names_and_hids]
         while True:
-            pad = 24
-            self.u.head("Select IRQs To Nullify")
-            print("")
-            print("Current Legacy IRQs:")
-            print("")
+            lines = [""]
+            lines.append("Current Legacy IRQs:")
+            lines.append("")
             if not len(irqs):
-                print(" - None Found")
-            pad+=len(irqs) if len(irqs) else 1
+                lines.append(" - None Found")
             for x in irqs:
                 if not hid_pad:
-                    print(" {} {}: {}".format(
+                    lines.append(" {} {}: {}".format(
                         "*" if x.upper() in names_and_hids else " ",
                         x.rjust(4," "),
                         self.get_all_irqs(irqs[x]["irq"])
                     ))
                 else:
-                    print(" {} {} {}: {}".format(
+                    lines.append(" {} {} {}: {}".format(
                         "*" if x.upper() in names_and_hids or irqs[x].get("hid","").upper() in names_and_hids else " ",
                         x.rjust(4," "),
                         ("- "+irqs[x].get("hid","").rjust(hid_pad," ")) if irqs[x].get("hid") else "".rjust(hid_pad+2," "),
                         self.get_all_irqs(irqs[x]["irq"])
                     ))
-            print("")
-            print("C. Only Conflicting IRQs from Legacy Devices ({} from * devices)".format(",".join([str(x) for x in self.target_irqs]) if len(self.target_irqs) else "None"))
-            print("O. Only Conflicting IRQs ({})".format(",".join([str(x) for x in self.target_irqs]) if len(self.target_irqs) else "None"))
-            print("L. Legacy IRQs (from * devices)")
-            print("N. None")
-            print("")
-            print("M. Main Menu")
-            print("Q. Quit")
-            print("")
-            print("* Indicates a typically troublesome device")
-            print("You can also type your own list of Devices and IRQs")
-            print("The format is DEV1:IRQ1,IRQ2 DEV2:IRQ3,IRQ4")
-            print("You can omit the IRQ# to remove all from that device (DEV1: DEV2:1,2,3)")
-            print("For example, to remove IRQ 0 from RTC, all from IPIC, and 8 and 11 from TMR:\n")
-            print("RTC:0 IPIC: TMR:8,11")
-            self.u.resize(self.w, max(pad,self.h))
+            lines.append("")
+            lines.append("C. Only Conflicting IRQs from Legacy Devices ({} from * devices)".format(",".join([str(x) for x in self.target_irqs]) if len(self.target_irqs) else "None"))
+            lines.append("O. Only Conflicting IRQs ({})".format(",".join([str(x) for x in self.target_irqs]) if len(self.target_irqs) else "None"))
+            lines.append("L. Legacy IRQs (from * devices)")
+            lines.append("N. None")
+            lines.append("")
+            lines.append("M. Main Menu")
+            lines.append("Q. Quit")
+            lines.append("")
+            lines.append("* Indicates a typically troublesome device")
+            lines.append("You can also type your own list of Devices and IRQs")
+            lines.append("The format is DEV1:IRQ1,IRQ2 DEV2:IRQ3,IRQ4")
+            lines.append("You can omit the IRQ# to remove all from that device (DEV1: DEV2:1,2,3)")
+            lines.append("For example, to remove IRQ 0 from RTC, all from IPIC, and 8 and 11 from TMR:\n")
+            lines.append("RTC:0 IPIC: TMR:8,11")
+            lines.append("")
+            max_line = max(lines,key=len)
+            if self.resize_window:
+                self.u.resize(max(len(max_line),self.w), max(len(lines)+5,self.h))
+            self.u.head("Select IRQs To Nullify")
+            print("\n".join(lines))
             menu = self.u.grab("Please select an option (default is C):  ")
             if not len(menu):
                 menu = "c"
             if menu.lower() == "m": return None
             elif menu.lower() == "q":
-                self.u.resize(self.w,self.h)
+                if self.resize_window:
+                    self.u.resize(self.w,self.h)
                 self.u.custom_quit()
             d = {}
             if menu.lower() == "n":
@@ -829,7 +975,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                     d[name.upper()] = val
                 if d == None:
                     continue
-            self.u.resize(self.w,self.h)
+            if self.resize_window:
+                self.u.resize(self.w,self.h)
             return d
 
     def fix_hpet(self):
@@ -937,7 +1084,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
             print(" - Nothing to patch!")
             print("")
         # Let's apply patches as we go
-        saved_dsdt = self.d.dsdt_raw
+        saved_dsdt = self.d.get_dsdt_or_only()["raw"]
         unique_patches  = {}
         generic_patches = []
         for dev in devs:
@@ -1007,7 +1154,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                 print("   Replace: {}".format(x["repl"]))
                 print("")
         # Restore the original DSDT in memory
-        self.d.dsdt_raw = saved_dsdt
+        self.d.get_dsdt_or_only()["raw"] = saved_dsdt
         oc = {
             "Comment":"HPET Device Fake" if hpet_fake else "{} _CRS (Needs _CRS to XCRS Rename)".format(name.split(".")[-1].lstrip("\\")),
             "Enabled":True,
@@ -1568,7 +1715,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
                 patches.append({"Comment":"{} _STA to XSTA Rename".format(task["device"].split(".")[-1]),"Find":padl+sta_hex+padr,"Replace":padl+xsta_hex+padr})
             # Let's try to get the _ADR
             scope_adr = self.d.get_name_paths(task["device"]+"._ADR")
-            task["address"] = self.d.dsdt_lines[scope_adr[0][1]].strip() if len(scope_adr) else "Name (_ADR, Zero)  // _ADR: Address"
+            task["address"] = self.d.get_dsdt_or_only()["lines"][scope_adr[0][1]].strip() if len(scope_adr) else "Name (_ADR, Zero)  // _ADR: Address"
             tasks.append(task)
         oc = {"Comment":"SSDT to disable USB RHUB/HUBN/URTH and rename devices","Enabled":True,"Path":"SSDT-USB-Reset.aml"}
         self.make_plist(oc, "SSDT-USB-Reset.aml", patches)
@@ -1761,7 +1908,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         # Let's see what, if any, the highest version contained in the DSDT is
         highest_osi = None
         for x in self.osi_strings:
-            if self.osi_strings[x] in self.d.dsdt:
+            if self.osi_strings[x] in self.d.get_dsdt_or_only()["table"]:
                 highest_osi = x
         while True:
             lines = [""]
@@ -1775,7 +1922,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             lines.append("M. Main")
             lines.append("Q. Quit")
             lines.append("")
-            self.u.resize(self.w, max(len(lines)+4,self.h))
+            if self.resize_window:
+                self.u.resize(self.w, max(len(lines)+4,self.h))
             self.u.head("XOSI")
             print("\n".join(lines))
             menu = self.u.grab("Please select the latest Windows version for SSDT-XOSI{}:  ".format(
@@ -1784,7 +1932,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             if not len(menu): menu = "a" # Use the default if we passed nothing
             if menu.lower() == "m": return
             if menu.lower() == "q":
-                self.u.resize(self.w,self.h)
+                if self.resize_window:
+                    self.u.resize(self.w,self.h)
                 self.u.custom_quit()
             if menu.lower() == "a" and highest_osi:
                 target_string = highest_osi
@@ -1796,7 +1945,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                 continue
             # Got a valid option - break out and create the SSDT
             break
-        self.u.resize(self.w,self.h)
+        if self.resize_window:
+            self.u.resize(self.w,self.h)
         self.u.head("XOSI")
         print("")
         print("Creating SSDT-XOSI with support through {}...".format(target_string))
@@ -1853,9 +2003,11 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         self.u.grab("Press [enter] to return...")
         return
 
-    def get_address_from_line(self, line, split_by="_ADR, "):
+    def get_address_from_line(self, line, split_by="_ADR, ", table=None):
+        if table is None:
+            table = self.d.get_dsdt_or_only()
         try:
-            return int(self.d.dsdt_lines[line].split(split_by)[1].split(")")[0].replace("Zero","0x0").replace("One","0x1"),16)
+            return int(table["lines"][line].split(split_by)[1].split(")")[0].replace("Zero","0x0").replace("One","0x1"),16)
         except:
             return None
 
@@ -2173,7 +2325,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         return
 
     def ssdt_pnlf(self):
-        if not self.ensure_dsdt(): return
+        if not self.ensure_dsdt(allow_any=True): return
         # Let's get our _UID
         while True:
             self.u.head("Select _UID for PNLF")
@@ -2251,47 +2403,57 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         # Check if we are building the SSDT with a _UID of 14
         if get_igpu:
             print(" - Setting PWMMax calculations")
-            # Try to gather our iGPU device
-            paths = self.d.get_path_of_type(obj_type="Name",obj="_ADR")
             print("Looking for iGPU device at 0x00020000...")
-            for path in paths:
-                adr = self.get_address_from_line(path[1])
-                if adr == 0x00020000:
-                    igpu = path[0][:-5]
-                    print(" - Found at {}".format(igpu))
-                    break
+            for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
+                table = self.d.acpi_tables[table_name]
+                print(" Checking {}...".format(table_name))
+                # Try to gather our iGPU device
+                paths = self.d.get_path_of_type(obj_type="Name",obj="_ADR",table=table)
+                for path in paths:
+                    adr = self.get_address_from_line(path[1],table=table)
+                    if adr == 0x00020000:
+                        igpu = path[0][:-5]
+                        print(" - Found at {}".format(igpu))
+                        break
+                if igpu:
+                    break # Leave the table search loop
             if not igpu: # Try matching by name
-                print(" - Not found!")
+                print("Not found by address!")
                 print("Searching common iGPU names...")
-                pci_roots = self.d.get_device_paths_with_hid(hid="PNP0A08")
-                pci_roots += self.d.get_device_paths_with_hid(hid="PNP0A03")
-                pci_roots += self.d.get_device_paths_with_hid(hid="ACPI0016")
-                external = []
-                for line in self.d.dsdt_lines:
-                    if not line.strip().startswith("External ("): continue # We don't need it
-                    try:
-                        path = line.split("(")[1].split(", ")[0]
-                        # Prepend the backslash and ensure trailing underscores are stripped.
-                        path = "\\"+".".join([x.rstrip("_").replace("\\","") for x in path.split(".")])
-                        external.append(path)
-                    except: pass
-                for root in pci_roots:
-                    for name in ("IGPU","_VID","VID0","VID1","GFX0","VGA","_VGA"):
-                        test_path = "{}.{}".format(root[0],name)
-                        device = self.d.get_device_paths(test_path)
-                        if device: device = device[0][0] # Unpack to the path
-                        else:
-                            # Walk the external paths and see if it's declared elsewhere?
-                            # We're not patching anything directly - just getting a pathing
-                            # reference, so it's fine to not have the surrounding code.
-                            device = next((x for x in external if test_path == x),None)
-                        if not device: continue # Not found :(
-                        # Got a device - see if it has an _ADR, and skip if so - as it was wrong in the prior loop
-                        if self.d.get_path_of_type(obj_type="Name",obj=device+"._ADR"): continue
-                        # At this point - we got a hit
-                        igpu = device
-                        guessed = True
-                        print(" - Found likely iGPU device at {}".format(igpu))
+                for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
+                    table = self.d.acpi_tables[table_name]
+                    print(" Checking {}...".format(table_name))
+                    pci_roots = self.d.get_device_paths_with_hid(hid="PNP0A08",table=table)
+                    pci_roots += self.d.get_device_paths_with_hid(hid="PNP0A03",table=table)
+                    pci_roots += self.d.get_device_paths_with_hid(hid="ACPI0016",table=table)
+                    external = []
+                    for line in table["lines"]:
+                        if not line.strip().startswith("External ("): continue # We don't need it
+                        try:
+                            path = line.split("(")[1].split(", ")[0]
+                            # Prepend the backslash and ensure trailing underscores are stripped.
+                            path = "\\"+".".join([x.rstrip("_").replace("\\","") for x in path.split(".")])
+                            external.append(path)
+                        except: pass
+                    for root in pci_roots:
+                        for name in ("IGPU","_VID","VID0","VID1","GFX0","VGA","_VGA"):
+                            test_path = "{}.{}".format(root[0],name)
+                            device = self.d.get_device_paths(test_path,table=table)
+                            if device: device = device[0][0] # Unpack to the path
+                            else:
+                                # Walk the external paths and see if it's declared elsewhere?
+                                # We're not patching anything directly - just getting a pathing
+                                # reference, so it's fine to not have the surrounding code.
+                                device = next((x for x in external if test_path == x),None)
+                            if not device: continue # Not found :(
+                            # Got a device - see if it has an _ADR, and skip if so - as it was wrong in the prior loop
+                            if self.d.get_path_of_type(obj_type="Name",obj=device+"._ADR",table=table): continue
+                            # At this point - we got a hit
+                            igpu = device
+                            guessed = True
+                            print(" - Found likely iGPU device at {}".format(igpu))
+                    if igpu:
+                        break # Leave the table search loop
         if get_igpu and (not igpu or guessed):
             # We need to prompt the user based on what we have
             if igpu:
@@ -2318,7 +2480,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
                     self.u.head("Custom iGPU Path")
                     print("")
                     if not guessed:
-                        print("No valid iGPU path was found in the passed DSDT.\n")
+                        print("No valid iGPU path was found in the passed ACPI table(s).\n")
                     print("Please type the iGPU ACPI path to use.  Each path element is limited")
                     print("to 4 alphanumeric characters (starting with a letter or underscore),")
                     print("and separated by spaces.")
@@ -2334,7 +2496,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
                     elif manual_igpu.lower() == "m":
                         return
                     else: # Maybe got a path - qualify it
-                        parts = manual_igpu.upper().split(".")
+                        parts = manual_igpu.lstrip("\\").upper().split(".")
                         # Make sure it's between 1 and 4 chars long, and doesn't start with a number
                         valid = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
                         nostart = "0123456789"
@@ -2354,38 +2516,47 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
             print(" - iGPU Path: {}{}".format(
                 igpu,
                 " (Guessed)" if guessed else " (Manually Entered)" if manual else ""
-            ))
-                        
+            ))          
         patches = []
-        if "PNLF" in self.d.dsdt:
-            print("PNLF detected in DSDT - generating rename...")
-            patches.append({"Comment":"PNLF to XNLF Rename","Find":"504E4C46","Replace":"584E4C46"})
-        # Check for Name (NBCF, Zero) or Name (NBCF, 0x00)
+        # Check all tables for PNLF and generate an XNLF rename if found
+        for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
+            table = self.d.acpi_tables[table_name]
+            if "PNLF" in table["table"]:
+                print("PNLF detected in {} - generating rename...".format(table_name))
+                patches.append({"Comment":"PNLF to XNLF Rename","Find":"504E4C46","Replace":"584E4C46"})
+                break
+        # Checks for Name (NBCF, Zero) or Name (NBCF, 0x00)
         nbcf_old = binascii.unhexlify("084E4243460A00")
         nbcf_new = binascii.unhexlify("084E42434600")
-        nbcf = False
-        if nbcf_old in self.d.dsdt_raw:
-            print("Name (NBCF, 0x00) detected in DSDT - generating patch...")
-            nbcf = True
-            # Got a hit with the old approach
-            patches.append({
-                "Comment":"NBCF 0x00 to 0x01 for BrightnessKeys.kext",
-                "Find":"084E4243460A00",
-                "Replace":"084E4243460A01",
-                "Enabled":False,
-                "Disabled":True
-            })
-        if nbcf_new in self.d.dsdt_raw:
-            print("Name (NBCF, Zero) detected in DSDT - generating patch...")
-            nbcf = True
-            # Got a hit with the new approach
-            patches.append({
-                "Comment":"NBCF Zero to One for BrightnessKeys.kext",
-                "Find":"084E42434600",
-                "Replace":"084E42434601",
-                "Enabled":False,
-                "Disabled":True
-            })
+        # Initialize some boolean flags
+        has_nbcf_old = has_nbcf_new = False
+        for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
+            table = self.d.acpi_tables[table_name]
+            # Check for NBCF
+            if not has_nbcf_old and nbcf_old in table["raw"]:
+                print("Name (NBCF, 0x00) detected in {} - generating patch...".format(table_name))
+                has_nbcf_old = True
+                # Got a hit with the old approach
+                patches.append({
+                    "Comment":"NBCF 0x00 to 0x01 for BrightnessKeys.kext",
+                    "Find":"084E4243460A00",
+                    "Replace":"084E4243460A01",
+                    "Enabled":False,
+                    "Disabled":True
+                })
+            if not has_nbcf_new and nbcf_new in table["raw"]:
+                print("Name (NBCF, Zero) detected in {} - generating patch...".format(table_name))
+                has_nbcf_new = True
+                # Got a hit with the new approach
+                patches.append({
+                    "Comment":"NBCF Zero to One for BrightnessKeys.kext",
+                    "Find":"084E42434600",
+                    "Replace":"084E42434601",
+                    "Enabled":False,
+                    "Disabled":True
+                })
+            if has_nbcf_old and has_nbcf_new:
+                break # Nothing else to look for
         ssdt = """//
 // Much of the info pulled from: https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/Source/SSDT-PNLF.dsl
 //
@@ -2538,10 +2709,10 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         self.make_plist(oc, "SSDT-PNLF.aml", patches, replace=True)
         if igpu:
             if guessed:
-                print("\n{}!! WARNING !!{} iGPU path was guessed to be {} - VERIFY BEFORE USING!!".format(self.red,self.rst,igpu))
+                print("\n{}!! WARNING !!{} iGPU path was guessed to be {}\n              !!VERIFY BEFORE USING!!".format(self.red,self.rst,igpu))
             if manual:
-                print("\n{}!! WARNING !!{} iGPU path was manually set to {} - VERIFY BEFORE USING!!".format(self.red,self.rst,igpu))
-        if nbcf:
+                print("\n{}!! WARNING !!{} iGPU path was manually set to {}\n              !!VERIFY BEFORE USING!!".format(self.red,self.rst,igpu))
+        if has_nbcf_old or has_nbcf_new:
             print("\n{}!! WARNING !!{} NBCF patch was generated - VERIFY BEFORE ENABLING!!".format(self.red,self.rst))
         print("")
         print("Done.")
@@ -2550,122 +2721,148 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         return
 
     def fix_dmar(self):
-        d = dsdt.DSDT() # Create a new instance just for this
-        while True:
-            self.u.head("Select DMAR Table")
-            print(" ")
-            print("M. Main")
-            print("Q. Quit")
-            print(" ")
-            dmar = self.u.grab("Please drag and drop a DMAR.aml table here:  ")
-            if dmar.lower() == "m":
-                return
-            if dmar.lower() == "q":
-                self.u.custom_quit()
-            out = self.u.check_path(dmar)
-            if not out: continue
-            # Got a DMAR table, try to load it
-            self.u.head("Patching DMAR")
+        dmar = next((table for table in self.d.acpi_tables.values() if table.get("signature","").lower() == "dmar"),None)
+        if not dmar:
+            d = None
+            while True:
+                self.u.head("Select DMAR Table")
+                print(" ")
+                print("M. Main")
+                print("Q. Quit")
+                print(" ")
+                dmar = self.u.grab("Please drag and drop a DMAR table here:  ")
+                if dmar.lower() == "m":
+                    return
+                if dmar.lower() == "q":
+                    self.u.custom_quit()
+                out = self.u.check_path(dmar)
+                if not out: continue
+                self.u.head("Loading DMAR Table")
+                print("")
+                print("Loading {}...".format(os.path.basename(out)))
+                if d is None:
+                    d = dsdt.DSDT() # Initialize a new instance just for this
+                # Got a DMAR table, try to load it
+                d.load(out)
+                dmar = d.get_table_with_signature("DMAR")
+                if not dmar: continue
+                break
+        self.u.head("Patching DMAR")
+        print("")
+        print("Verifying signature...")
+        reserved = got_sig = False
+        new_dmar = ["// DMAR table with Reserved Memory Regions stripped\n"]
+        region_count = 0
+        for line in dmar.get("lines",[]):
+            if 'Signature : "DMAR"' in line:
+                got_sig = True
+                print("Checking for Reserved Memory Regions...")
+            if not got_sig: continue # Skip until we find the signature
+            # If we find a reserved memory region, toggle our indicator
+            if "Subtable Type : 0001 [Reserved Memory Region]" in line:
+                region_count += 1
+                reserved = True
+            # Check for a non-reserved memory region subtable type
+            elif "Subtable Type : " in line:
+                reserved = False
+            # Only append if we're not in a reserved memory region
+            if not reserved:
+                # Ensure any digits in Reserved : XX fields are 0s
+                if "Reserved : " in line:
+                    res,value = line.split(" : ")
+                    new_val = ""
+                    for i,char in enumerate(value):
+                        if not char in " 0123456789ABCDEF":
+                            # Hit something else - dump the rest as-is into the val
+                            new_val += value[i:]
+                            break
+                        elif char not in ("0"," "):
+                            # Ensure we 0 out all non-0, non-space values
+                            char = "0"
+                        # Append the character
+                        new_val += char
+                    line = "{} : {}".format(res,new_val)
+                new_dmar.append(line)
+        if not got_sig:
+            print(" - Not found, does not appear to be a valid DMAR table.")
             print("")
-            print("Loading {}...".format(os.path.basename(out)))
-            dmar_table = d.load(out)
-            if not dmar_table:
-                self.u.head("Decompile Failure")
-                print("")
-                print("Could not decompile that table!")
-                print("")
-                self.u.grab("Press [enter] to return...")
-                continue
-            print("Verifying signature...")
-            reserved = got_sig = False
-            new_dmar = ["// DMAR table with Reserved Memory Regions stripped\n"]
-            region_count = 0
-            for line in d.dsdt_lines:
-                if 'Signature : "DMAR"' in line:
-                    got_sig = True
-                    print("Checking for Reserved Memory Regions...")
-                if not got_sig: continue # Skip until we find the signature
-                # If we find a reserved memory region, toggle our indicator
-                if "Subtable Type : 0001 [Reserved Memory Region]" in line:
-                    region_count += 1
-                    reserved = True
-                # Check for a non-reserved memory region subtable type
-                elif "Subtable Type : " in line:
-                    reserved = False
-                # Only append if we're not in a reserved memory region
-                if not reserved:
-                    new_dmar.append(line)
-            if not got_sig:
-                print(" - Not found, does not appear to be a valid DMAR table.")
-                print("")
-                self.u.grab("Press [enter] to return...")
-                continue
-            # Give the user some feedback
-            if not region_count:
-                # None found
-                print("No Reserved Memory Regions found - DMAR does not need patching.")
-                print("")
-                self.u.grab("Press [enter] to return to main menu...")
-                return
-            # We removed some regions
-            print("Located {:,} Reserved Memory Region{} - generating new table...".format(region_count,"" if region_count==1 else "s"))
-            self.write_ssdt("DMAR","\n".join(new_dmar).strip())
-            oc = {
-                "Comment":"Replacement DMAR table with Reserved Memory Regions stripped - requires DMAR table be dropped",
-                "Enabled":True,
-                "Path":"DMAR.aml"
-            }
-            drop = ({
-                "Comment":"Drop DMAR Table",
-                "Signature":"DMAR"
-            },)
-            self.make_plist(oc, "DMAR.aml", (), drops=drop)
-            print("")
-            print("Done.")
-            self.patch_warn()
             self.u.grab("Press [enter] to return...")
             return
+        # Give the user some feedback
+        if not region_count:
+            # None found
+            print("No Reserved Memory Regions found - DMAR does not need patching.")
+            print("")
+            self.u.grab("Press [enter] to return to main menu...")
+            return
+        # We removed some regions
+        print("Located {:,} Reserved Memory Region{} - generating new table...".format(region_count,"" if region_count==1 else "s"))
+        self.write_ssdt("DMAR","\n".join(new_dmar).strip())
+        oc = {
+            "Comment":"Replacement DMAR table with Reserved Memory Regions stripped - requires DMAR table be dropped",
+            "Enabled":True,
+            "Path":"DMAR.aml"
+        }
+        drop = ({
+            "Comment":"Drop DMAR Table",
+            "Signature":"DMAR"
+        },)
+        self.make_plist(oc, "DMAR.aml", (), drops=drop)
+        print("")
+        print("Done.")
+        self.patch_warn()
+        self.u.grab("Press [enter] to return...")
+        return
 
     def main(self):
-        h_add = 0
-        if os.name != "nt":
-            # Increase the window height to accommodate new entries
-            # Windows cmd windows are taller than macOS/Linux terminal already
-            if self.d.iasl_legacy: # We have a "Use legacy compiler" option
-                h_add += 1
-            if sys.platform.startswith("linux"): # We have the option to dump DSDT
-                h_add += 1
-        h = self.h + h_add
-        self.u.resize(self.w,h)
         cwd = os.getcwd()
-        self.u.head()
-        print("")
-        print("Current DSDT:  {}".format(self.dsdt))
-        print("")
-        print("1. FixHPET       - Patch Out IRQ Conflicts")
-        print("2. FakeEC        - OS-Aware Fake EC")
-        print("3. FakeEC Laptop - Only Builds Fake EC - Leaves Existing Untouched")
-        print("4. USBX          - Power properties for USB on SKL and newer SMBIOS")
-        print("5. PluginType    - Redefines CPU Objects as Processor and sets plugin-type = 1")
-        print("6. PMC           - Enables Native NVRAM on True 300-Series Boards")
-        print("7. RTCAWAC       - Context-Aware AWAC Disable and RTC Enable/Fake/Range Fix")
-        print("8. USB Reset     - Reset USB controllers to allow hardware mapping")
-        print("9. PCI Bridge    - Create missing PCI bridges for passed device path")
-        print("0. PNLF          - Sets up a PNLF device for laptop backlight control")
-        print("A. XOSI          - _OSI rename and patch to return true for a range of Windows")
-        print("                   versions - also checks for OSID")
-        print("B. Fix DMAR      - Remove Reserved Memory Regions from the DMAR table")
-        print("")
+        lines=[""]
+        if self.dsdt:
+            lines.append("Currently Loaded Tables ({:,}):".format(len(self.d.acpi_tables)))
+            lines.append("")
+            lines.extend(["  "+x for x in textwrap.wrap(
+                    " ".join(self.sorted_nicely(list(self.d.acpi_tables))),
+                    width=70, # Limit the width to 80 for aesthetics
+                    break_on_hyphens=False
+                )])
+            lines.extend([
+                "",
+                "Loaded From: {}".format(self.dsdt)
+            ])
+        else:
+            lines.append("Currently Loaded Tables: None")
+        lines.append("")
+        lines.append("1. FixHPET       - Patch Out IRQ Conflicts")
+        lines.append("2. FakeEC        - OS-Aware Fake EC")
+        lines.append("3. FakeEC Laptop - Only Builds Fake EC - Leaves Existing Untouched")
+        lines.append("4. USBX          - Power properties for USB on SKL and newer SMBIOS")
+        lines.append("5. PluginType    - Redefines CPU Objects as Processor and sets plugin-type = 1")
+        lines.append("6. PMC           - Enables Native NVRAM on True 300-Series Boards")
+        lines.append("7. RTCAWAC       - Context-Aware AWAC Disable and RTC Enable/Fake/Range Fix")
+        lines.append("8. USB Reset     - Reset USB controllers to allow hardware mapping")
+        lines.append("9. PCI Bridge    - Create missing PCI bridges for passed device path")
+        lines.append("0. PNLF          - Sets up a PNLF device for laptop backlight control")
+        lines.append("A. XOSI          - _OSI rename and patch to return true for a range of Windows")
+        lines.append("                   versions - also checks for OSID")
+        lines.append("B. Fix DMAR      - Remove Reserved Memory Regions from the DMAR table")
+        lines.append("")
         if sys.platform.startswith("linux") or sys.platform == "win32":
-            print("P. Dump DSDT     - Automatically dump the system DSDT")
+            lines.append("P. Dump the current system's ACPI tables")
         if self.d.iasl_legacy:
-            print("L. Use Legacy Compiler for macOS 10.6 and prior: {}".format("{}!! Enabled !!{}".format(self.yel,self.rst) if self.iasl_legacy else "Disabled"))
-        print("D. Select DSDT or origin folder")
-        print("Q. Quit")
-        print("")
+            lines.append("L. Use Legacy Compiler for macOS 10.6 and prior: {}".format("{}!! Enabled !!{}".format(self.yel,self.rst) if self.iasl_legacy else "Disabled"))
+        lines.append("D. Select ACPI table or folder containing tables")
+        lines.append("R. {} Window Resizing".format("Enable" if not self.resize_window else "Disable"))
+        lines.append("Q. Quit")
+        lines.append("")
+        if self.resize_window:
+            self.u.resize(self.w,max(self.h,len(lines)+4))
+        self.u.head()
+        print("\n".join(lines))
         menu = self.u.grab("Please make a selection:  ")
         if not len(menu):
             return
+        if self.resize_window:
+            self.u.resize(self.w,self.h)
         if menu.lower() == "q":
             self.u.custom_quit()
         if menu.lower() == "d":
@@ -2696,14 +2893,16 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         elif menu.lower() == "b":
             self.fix_dmar()
         elif menu.lower() == "p" and (sys.platform.startswith("linux") or sys.platform == "win32"):
+            output_folder = os.path.join(os.path.dirname(os.path.realpath(__file__)),self.output)
+            acpi_name = self.get_unique_name("ACPI",output_folder,name_append="")
             self.dsdt = self.load_dsdt(
-                self.d.dump_dsdt(
-                    os.path.join(os.path.dirname(os.path.realpath(__file__)),self.output),
-                    decompile=False
-                )
+                self.d.dump_tables(os.path.join(output_folder,acpi_name))
             )
         elif menu.lower() == "l" and self.d.iasl_legacy:
             self.iasl_legacy = not self.iasl_legacy
+            self.save_settings()
+        elif menu.lower() == "r":
+            self.resize_window ^= True
             self.save_settings()
         return
 
