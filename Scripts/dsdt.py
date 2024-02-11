@@ -337,6 +337,17 @@ class DSDT:
                 if out[2] != 0:
                     print(" - {}".format(out[1]))
                     return
+                # Iterate the dumped files and ensure the names are uppercase, and the
+                # extension used is .aml, not the default .dat
+                print("Updating names...")
+                for f in os.listdir(res):
+                    new_name = ".DAT".join(f.upper().split(".DAT")[:-1])+".aml"
+                    if new_name != f:
+                        # Something changed - print it and rename it
+                        try:
+                            os.rename(os.path.join(res,f),os.path.join(res,new_name))
+                        except Exception as e:
+                            print(" - {} -> {} failed: {}".format(f,new_name,e))
                 print("Dump successful!")
                 if disassemble:
                     return self.load(res)
@@ -354,7 +365,7 @@ class DSDT:
             for table in os.listdir(table_dir):
                 if not os.path.isfile(os.path.join(table_dir,table)):
                     continue # We only want files
-                target_path = os.path.join(res,table+".aml")
+                target_path = os.path.join(res,table.upper()+".aml")
                 out = self.r.run({"args":["sudo","cp",os.path.join(table_dir,table),target_path]})
                 if out[2] != 0:
                     print(" - {}".format(out[1]))
