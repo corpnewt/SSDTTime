@@ -230,7 +230,7 @@ class SSDT:
             patches = []
             print("Iterating patches...\n")
             for p in self.pre_patches:
-                if not all((x in p for x in ("PrePatch","Comment","Find","Replace"))): continue
+                if not all(x in p for x in ("PrePatch","Comment","Find","Replace")): continue
                 print(" - {}".format(p["PrePatch"]))
                 find = binascii.unhexlify(p["Find"])
                 if d.count(find) == 1:
@@ -521,7 +521,7 @@ class SSDT:
                         rename = True
                     scope = "\n".join(self.d.get_scope(x[1],strip_comments=True,table=table))
                     # We need to check for _HID, _CRS, and _GPE
-                    if all((y in scope for y in ["_HID","_CRS","_GPE"])):
+                    if all(y in scope for y in ["_HID","_CRS","_GPE"]):
                         print(" ----> Valid EC Device")
                         sta = self.get_sta_var(
                             var=None,
@@ -1531,7 +1531,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
 DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
 {
 """
-        if any((x.get("has_var") for x in (awac_dict,rtc_dict))):
+        if any(x.get("has_var") for x in (awac_dict,rtc_dict)):
             ssdt += """    External (STAS, IntObj)
     Scope (\\)
     {
@@ -2506,7 +2506,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
                         # Make sure it's between 1 and 4 chars long, and doesn't start with a number
                         valid = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
                         nostart = "0123456789"
-                        if any((not 0<len(p)<5 or p[0] in nostart or not all((x in valid for x in p)) for p in parts)):
+                        if any(not 0<len(p)<5 or p[0] in nostart or not all(x in valid for x in p) for p in parts):
                             continue
                         # Strip trailing underscores
                         parts = [p.rstrip("_") for p in parts]
