@@ -448,6 +448,47 @@ class SSDT:
         print("\n{}!! WARNING !!{}  Make sure you merge the contents of patches_[OC/Clover].plist".format(self.red,self.rst))
         print("               with your config.plist!\n")
 
+    def get_lpc_name(self,log=True,skip_ec=False,skip_common_names=False):
+        # Intel devices appear to use _ADR, 0x001F0000
+        # AMD devices appear to use _ADR, 0x00140003
+        if log: print("Locating LPC(B)/SBRG...")
+        for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
+            table = self.d.acpi_tables[table_name]
+            # The LPCB device will always be the parent of the PNP0C09 device
+            # if found
+            if not skip_ec:
+                ec_list = self.d.get_device_paths_with_hid("PNP0C09",table=table)
+                if len(ec_list):
+                    lpc_name = ".".join(ec_list[0][0].split(".")[:-1])
+                    if log: print(" - Found {} in {}".format(lpc_name,table_name))
+                    return lpc_name
+            # Maybe try common names if we haven't found it yet
+            if not skip_common_names:
+                for x in ("LPCB", "LPC0", "LPC", "SBRG", "PX40"):
+                    try:
+                        lpc_name = self.d.get_device_paths(x,table=table)[0][0]
+                        if log: print(" - Found {} in {}".format(lpc_name,table_name))
+                        return lpc_name
+                    except: pass
+            # Finally check by address - some Intel tables have devices at
+            # 0x00140003
+            paths = self.d.get_path_of_type(obj_type="Name",obj="_ADR",table=table)
+            for path in paths:
+                adr = self.get_address_from_line(path[1],table=table)
+                if adr in (0x001F0000, 0x00140003):
+                    # Get the path minus ._ADR
+                    lpc_name = path[0][:-5]
+                    # Make sure the LPCB device does not have an _HID
+                    lpc_hid = lpc_name+"._HID"
+                    if any(x[0]==lpc_hid for x in table.get("paths",[])):
+                        continue
+                    if log: print(" - Found {} in {}".format(lpc_name,table_name))
+                    return lpc_name
+        if log:
+            print(" - Could not locate LPC(B)! Aborting!")
+            print("")
+        return None # Didn't find it
+
     def fake_ec(self, laptop = False):
         rename = False
         if not self.ensure_dsdt():
@@ -455,54 +496,55 @@ class SSDT:
         self.u.head("Fake EC")
         print("")
         print("Locating PNP0C09 (EC) devices...")
-        ec_list = self.d.get_device_paths_with_hid("PNP0C09")
-        ec_to_patch  = []
+        ec_to_patch = []
         ec_sta = {}
         patches = []
         lpc_name = None
-        if len(ec_list):
-            lpc_name = ".".join(ec_list[0][0].split(".")[:-1])
-            print(" - Got {}".format(len(ec_list)))
-            print(" - Validating...")
-            for x in ec_list:
-                device = orig_device = x[0]
-                print(" --> {}".format(device))
-                if device.split(".")[-1] == "EC":
-                    if laptop:
-                        print(" ----> Named EC device located - no fake needed.")
-                        print("")
-                        self.u.grab("Press [enter] to return to main menu...")
-                        return
-                    print(" ----> EC called EC. Renaming")
-                    device = ".".join(device.split(".")[:-1]+["EC0"])
-                    rename = True
-                scope = "\n".join(self.d.get_scope(x[1],strip_comments=True))
-                # We need to check for _HID, _CRS, and _GPE
-                if all((y in scope for y in ["_HID","_CRS","_GPE"])):
-                    print(" ----> Valid EC Device")
-                    sta = self.get_sta_var(var=None,device=orig_device,dev_hid="PNP0C09",dev_name=orig_device.split(".")[-1],log_locate=False)
-                    if sta.get("patches"):
-                        patches.extend(sta.get("patches",[]))
-                        ec_sta[device] = sta
-                    if not laptop:
-                        ec_to_patch.append(device)
-                else:
-                    print(" ----> NOT Valid EC Device")
-        else:
-            print(" - None found - only needs a Fake EC device")
-        print("Locating LPC(B)/SBRG...")
-        if lpc_name == None:
-            for x in ("LPCB", "LPC0", "LPC", "SBRG", "PX40"):
-                try:
-                    lpc_name = self.d.get_device_paths(x)[0][0]
-                    break
-                except: pass
-        if not lpc_name:
-            print(" - Could not locate LPC(B)! Aborting!")
-            print("")
+        for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
+            table = self.d.acpi_tables[table_name]
+            ec_list = self.d.get_device_paths_with_hid("PNP0C09",table=table)
+            if len(ec_list):
+                lpc_name = ".".join(ec_list[0][0].split(".")[:-1])
+                print(" - Got {:,} in {}".format(len(ec_list),table_name))
+                print(" - Validating...")
+                for x in ec_list:
+                    device = orig_device = x[0]
+                    print(" --> {}".format(device))
+                    if device.split(".")[-1] == "EC":
+                        if laptop:
+                            print(" ----> Named EC device located - no fake needed.")
+                            print("")
+                            self.u.grab("Press [enter] to return to main menu...")
+                            return
+                        print(" ----> EC called EC. Renaming")
+                        device = ".".join(device.split(".")[:-1]+["EC0"])
+                        rename = True
+                    scope = "\n".join(self.d.get_scope(x[1],strip_comments=True,table=table))
+                    # We need to check for _HID, _CRS, and _GPE
+                    if all((y in scope for y in ["_HID","_CRS","_GPE"])):
+                        print(" ----> Valid EC Device")
+                        sta = self.get_sta_var(
+                            var=None,
+                            device=orig_device,
+                            dev_hid="PNP0C09",
+                            dev_name=orig_device.split(".")[-1],
+                            log_locate=False,
+                            table=table
+                        )
+                        if sta.get("patches"):
+                            patches.extend(sta.get("patches",[]))
+                            ec_sta[device] = sta
+                        if not laptop:
+                            ec_to_patch.append(device)
+                    else:
+                        print(" ----> NOT Valid EC Device")
+        if not ec_to_patch:
+            print(" - No valid EC devices found - only needs a Fake EC device")
+        if lpc_name is None:
+            lpc_name = self.get_lpc_name(skip_ec=True,skip_common_names=True)
+        if lpc_name is None:
             self.u.grab("Press [enter] to return to main menu...")
             return
-        print(" - Found {}".format(lpc_name))
         comment = "SSDT-EC"
         if rename == True:
             patches.insert(0,{
@@ -973,7 +1015,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                         d = None
                         break
                     d[name.upper()] = val
-                if d == None:
+                if d is None:
                     continue
             if self.resize_window:
                 self.u.resize(self.w,self.h)
@@ -1052,20 +1094,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
             patches.append({"Comment":"{} _CRS to XCRS Rename".format(name.split(".")[-1].lstrip("\\")),"Find":padl+crs+padr,"Replace":padl+xcrs+padr})
         else:
             print(" - None located!")
-            print(" - Locating LPC(B)/SBRG...")
-            ec_list = self.d.get_device_paths_with_hid("PNP0C09")
-            name = None
-            if len(ec_list):
-                name = ".".join(ec_list[0][0].split(".")[:-1])
-            if name == None:
-                for x in ("LPCB", "LPC0", "LPC", "SBRG", "PX40"):
-                    try:
-                        name = self.d.get_device_paths(x)[0][0]
-                        break
-                    except: pass
-            if not name:
-                print(" - Could not locate LPC(B)! Aborting!")
-                print("")
+            name = self.get_lpc_name(skip_ec=True,skip_common_names=True)
+            if name is None:
                 self.u.grab("Press [enter] to return to main menu...")
                 return
         devs = self.list_irqs()
@@ -1275,23 +1305,10 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
             return
         self.u.head("SSDT PMC")
         print("")
-        print("Locating LPC(B)/SBRG...")
-        ec_list = self.d.get_device_paths_with_hid("PNP0C09")
-        lpc_name = None
-        if len(ec_list):
-            lpc_name = ".".join(ec_list[0][0].split(".")[:-1])
-        if lpc_name == None:
-            for x in ("LPCB", "LPC0", "LPC", "SBRG", "PX40"):
-                try:
-                    lpc_name = self.d.get_device_paths(x)[0][0]
-                    break
-                except: pass
-        if not lpc_name:
-            print(" - Could not locate LPC(B)! Aborting!")
-            print("")
+        lpc_name = self.get_lpc_name()
+        if lpc_name is None:
             self.u.grab("Press [enter] to return to main menu...")
             return
-        print(" - Found {}".format(lpc_name))
         oc = {"Comment":"PMCR for native 300-series NVRAM","Enabled":True,"Path":"SSDT-PMC.aml"}
         self.make_plist(oc, "SSDT-PMC.aml", ())
         print("Creating SSDT-PMC...")
@@ -1336,7 +1353,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         self.patch_warn()
         self.u.grab("Press [enter] to return...")
 
-    def get_sta_var(self,var="STAS",device=None,dev_hid="ACPI000E",dev_name="AWAC",log_locate=True):
+    def get_sta_var(self,var="STAS",device=None,dev_hid="ACPI000E",dev_name="AWAC",log_locate=True,table=None):
         # Helper to check for a device, check for (and qualify) an _STA method,
         # and look for a specific variable in the _STA scope
         #
@@ -1346,13 +1363,13 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         patches = []
         root = None
         if device:
-            dev_list = self.d.get_device_paths(device)
+            dev_list = self.d.get_device_paths(device,table=table)
             if not len(dev_list):
                 if log_locate: print(" - Could not locate {}".format(device))
                 return {"value":False}
         else:
             if log_locate: print("Locating {} ({}) devices...".format(dev_hid,dev_name))
-            dev_list = self.d.get_device_paths_with_hid(dev_hid)
+            dev_list = self.d.get_device_paths_with_hid(dev_hid,table=table)
             if not len(dev_list):
                 if log_locate: print(" - Could not locate any {} devices".format(dev_hid))
                 return {"valid":False}
@@ -1362,13 +1379,13 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         print(" --> Verifying _STA...")
         # Check Method first - then Name
         sta_type = "MethodObj"
-        sta  = self.d.get_method_paths(dev[0]+"._STA")
-        xsta = self.d.get_method_paths(dev[0]+".XSTA")
+        sta  = self.d.get_method_paths(dev[0]+"._STA",table=table)
+        xsta = self.d.get_method_paths(dev[0]+".XSTA",table=table)
         if not sta and not xsta:
             # Check for names
             sta_type = "IntObj"
-            sta = self.d.get_name_paths(dev[0]+"._STA")
-            xsta = self.d.get_name_paths(dev[0]+".XSTA")
+            sta = self.d.get_name_paths(dev[0]+"._STA",table=table)
+            xsta = self.d.get_name_paths(dev[0]+".XSTA",table=table)
         if xsta and not sta:
             print(" --> _STA already renamed to XSTA!  Skipping other checks...")
             print("     Please disable _STA to XSTA renames for this device, reboot, and try again.")
@@ -1376,7 +1393,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
             return {"valid":False,"break":True,"device":dev,"dev_name":dev_name,"dev_hid":dev_hid,"sta_type":sta_type}
         if sta:
             if var:
-                scope = "\n".join(self.d.get_scope(sta[0][1],strip_comments=True))
+                scope = "\n".join(self.d.get_scope(sta[0][1],strip_comments=True,table=table))
                 has_var = var in scope
                 print(" --> {} {} variable".format("Has" if has_var else "Does NOT have",var))
         else:
@@ -1384,11 +1401,11 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         # Let's find out of we need a unique patch for _STA -> XSTA
         if sta and not has_var:
             print(" --> Generating _STA to XSTA rename")
-            sta_index = self.d.find_next_hex(sta[0][1])[1]
+            sta_index = self.d.find_next_hex(sta[0][1],table=table)[1]
             print(" ----> Found at index {}".format(sta_index))
             sta_hex  = "5F535441" # _STA
             xsta_hex = "58535441" # XSTA
-            padl,padr = self.d.get_shortest_unique_pad(sta_hex, sta_index)
+            padl,padr = self.d.get_shortest_unique_pad(sta_hex,sta_index,table=table)
             patches.append({"Comment":"{} _STA to XSTA Rename".format(dev_name),"Find":padl+sta_hex+padr,"Replace":padl+xsta_hex+padr})
         return {"valid":True,"has_var":has_var,"sta":sta,"patches":patches,"device":dev,"dev_name":dev_name,"dev_hid":dev_hid,"root":root,"sta_type":sta_type}
 
@@ -1407,19 +1424,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         # we need.  Let's see if we need an RTC fake - then build the SSDT.
         if not rtc_dict.get("valid"):
             print(" - Fake needed!")
-            print("Locating LPC(B)/SBRG...")
-            ec_list = self.d.get_device_paths_with_hid("PNP0C09")
-            if ec_list:
-                lpc_name = ".".join(ec_list[0][0].split(".")[:-1])
+            lpc_name = self.get_lpc_name()
             if lpc_name is None:
-                for x in ("LPCB", "LPC0", "LPC", "SBRG", "PX40"):
-                    try:
-                        lpc_name = self.d.get_device_paths(x)[0][0]
-                        break
-                    except: pass
-            if not lpc_name:
-                print(" - Could not locate LPC(B)! Aborting!")
-                print("")
                 self.u.grab("Press [enter] to return to main menu...")
                 return
         else:
