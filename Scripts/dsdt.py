@@ -1,4 +1,4 @@
-import os, errno, tempfile, shutil, plistlib, sys, binascii, zipfile, getpass
+import os, errno, tempfile, shutil, plistlib, sys, binascii, zipfile, getpass, re
 from . import run, downloader, utils
 
 class DSDT:
@@ -30,6 +30,9 @@ class DSDT:
         self.allowed_signatures = ("APIC","DMAR","DSDT","SSDT")
         self.mixed_listing      = ("DSDT","SSDT")
         self.acpi_tables = {}
+        # Setup regex matches
+        self.hex_match  = re.compile(r"^\s*[0-9A-F]{4,}:(\s[0-9A-F]{2})+(\s+\/\/.*)?$")
+        self.type_match = re.compile(r".*(?P<type>Processor|Scope|Device|Method|Name) \((?P<name>[^,\)]+).*")
 
     def _table_name_is_valid(self, table_name):
             if table_name.startswith(".") or not table_name.lower().endswith(self.table_suffixes):
@@ -464,7 +467,7 @@ class DSDT:
         return ("",start_index,end_index)
 
     def is_hex(self, line):
-        return ":" in line.split("//")[0] and all((x.lower() in "0123456789abcdef" for x in line.split(":")[0].strip()))
+        return self.hex_match.match(line) is not None
 
     def get_hex_starting_at(self, start_index, table=None):
         if not table: table = self.get_dsdt_or_only()
@@ -501,12 +504,12 @@ class DSDT:
         except: right_pad = None
         try:    mid_pad   = self.get_unique_pad(current_hex, index, None, instance, table=table)
         except: mid_pad   = None
-        if left_pad == right_pad == mid_pad == None: raise Exception("No unique pad found!")
+        if left_pad == right_pad == mid_pad is None: raise Exception("No unique pad found!")
         # We got at least one unique pad
         min_pad = None
         for x in (left_pad,right_pad,mid_pad):
-            if x == None: continue # Skip
-            if min_pad == None or len(x[0]+x[1]) < len(min_pad[0]+min_pad[1]):
+            if x is None: continue # Skip
+            if min_pad is None or len(x[0]+x[1]) < len(min_pad[0]+min_pad[1]):
                 min_pad = x
         return min_pad
 
@@ -531,7 +534,7 @@ class DSDT:
             check_bytes = self.get_hex_bytes(padl+current_hex+padr)
             if table["raw"].count(check_bytes) == 1: # Got it!
                 break
-            if direction == True or (direction == None and len(padr)<=len(padl)):
+            if direction == True or (direction is None and len(padr)<=len(padl)):
                 # Let's check a forward byte
                 if not len(liner):
                     # Need to grab more
@@ -540,7 +543,7 @@ class DSDT:
                 padr  = padr+liner[0:2]
                 liner = liner[2:]
                 continue
-            if direction == False or (direction == None and len(padl)<=len(padr)):
+            if direction == False or (direction is None and len(padl)<=len(padr)):
                 # Let's check a backward byte
                 if not len(linel):
                     # Need to grab more
@@ -556,7 +559,7 @@ class DSDT:
         if not table: table = self.get_dsdt_or_only()
         if not table: return []
         # Returns a list of tuples organized as (Device/Scope,d_s_index,matched_index)
-        if search == None:
+        if search is None:
             return []
         last_device = None
         device_index = 0
@@ -588,7 +591,7 @@ class DSDT:
                 continue
             line = self.get_line(line) if strip_comments else line
             scope.append(line)
-            if brackets == None:
+            if brackets is None:
                 if line.count("{"):
                     brackets = line.count("{")
                 continue
@@ -611,17 +614,55 @@ class DSDT:
     def get_paths(self, table=None):
         if not table: table = self.get_dsdt_or_only()
         if not table: return []
-        starting_indexes = []
-        for index,scope in enumerate(table.get("scopes",[])):
-            if not scope[0].strip().startswith(("Processor (","Device (","Method (","Name (")): continue
-            # Got a device - add its index
-            starting_indexes.append(index)
-        if not len(starting_indexes):
-            return starting_indexes
-        paths = []
-        for x in starting_indexes:
-            paths.append(self.get_path_starting_at(x, table=table))
-        return sorted(paths)
+        # Set up lists for complete paths, as well
+        # as our current path reference
+        path_list  = []
+        _path      = []
+        brackets = 0
+        for i,line in enumerate(table.get("lines",[])):
+            if self.is_hex(line):
+                # Skip hex
+                continue
+            brackets += line.count("{")-line.count("}")
+            while len(_path):
+                # Remove any path entries that are nested
+                # equal to or further than our current set
+                if _path[-1][-1] >= brackets:
+                    del _path[-1]
+                else:
+                    break
+            type_match = self.type_match.match(line)
+            if type_match:
+                # Add our path entry and save the full path
+                # to the path list as needed
+                _path.append((type_match.group("name"),brackets))
+                if type_match.group("type") == "Scope":
+                    continue
+                # Ensure that we only consider non-Scope paths that aren't
+                # already fully qualified with a \ prefix
+                path = []
+                for p in _path[::-1]:
+                    path.extend(p[0].split(".")[::-1])
+                    if p[0] in ("_SB","_SB_","_PR","_PR_") or p[0].startswith(("\\","_SB.","_SB_.","_PR.","_PR_.")):
+                        # Fully qualified - bail here
+                        break
+                path = ".".join(path[::-1]).split(".")
+                # Properly qualify the path
+                if len(path) and path[0] == "\\": path.pop(0)
+                if any(("^" in x for x in path)): # Accommodate caret notation
+                    new_path = []
+                    for x in path:
+                        if x.count("^"):
+                            # Remove the last Y paths to account for going up a level
+                            del new_path[-1*x.count("^"):]
+                        new_path.append(x.replace("^","")) # Add the original, removing any ^ chars
+                    path = new_path
+                if not path:
+                    continue
+                path_str = ".".join(path)
+                path_str = "\\"+path_str if path_str[0] != "\\" else path_str
+                path_list.append((path_str,i,type_match.group("type")))
+        return sorted(path_list)
 
     def get_path_of_type(self, obj_type="Device", obj="HPET", table=None):
         if not table: table = self.get_dsdt_or_only()
@@ -665,35 +706,3 @@ class DSDT:
                     else: devices.append((line,i-sub))
                     break
         return devices
-
-    def _normalize_types(self, line):
-        # Replaces Name, Processor, Device, and Method with Scope for splitting purposes
-        return line.replace("Name","Scope").replace("Processor","Scope").replace("Device","Scope").replace("Method","Scope")
-
-    def get_path_starting_at(self, starting_index=0, table=None):
-        if not table: table = self.get_dsdt_or_only()
-        if not table: return ("","","")
-        # Walk the scope backwards, keeping track of changes
-        pad = None
-        path = []
-        obj_type = next((x for x in ("Processor","Method","Scope","Device","Name") if x+" (" in table.get("scopes",[])[starting_index][0]),"Unknown Type")
-        for scope,original_index in table.get("scopes",[])[starting_index::-1]:
-            new_pad = self._normalize_types(scope).split("Scope (")[0]
-            if pad == None or new_pad < pad:
-                pad = new_pad
-                obj = self._normalize_types(scope).split("Scope (")[1].split(")")[0].split(",")[0]
-                path.append(obj)
-                if obj in ("_SB","_SB_","_PR","_PR_") or obj.startswith(("\\","_SB.","_SB_.","_PR.","_PR_.")): break # This is a full scope
-        path = path[::-1]
-        if len(path) and path[0] == "\\": path.pop(0)
-        if any(("^" in x for x in path)): # Accommodate caret notation
-            new_path = []
-            for x in path:
-                if x.count("^"):
-                    # Remove the last Y paths to account for going up a level
-                    del new_path[-1*x.count("^"):]
-                new_path.append(x.replace("^","")) # Add the original, removing any ^ chars
-            path = new_path
-        path = ".".join(path)
-        path = "\\"+path if path[0] != "\\" else path
-        return (path, table.get("scopes",[])[starting_index][1], obj_type)
