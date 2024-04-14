@@ -642,7 +642,7 @@ class DSDT:
                 # already fully qualified with a \ prefix
                 path = []
                 for p in _path[::-1]:
-                    path.extend(p[0].split(".")[::-1])
+                    path.append(p[0])
                     if p[0] in ("_SB","_SB_","_PR","_PR_") or p[0].startswith(("\\","_SB.","_SB_.","_PR.","_PR_.")):
                         # Fully qualified - bail here
                         break
