@@ -649,7 +649,7 @@ class DSDT:
                 path = ".".join(path[::-1]).split(".")
                 # Properly qualify the path
                 if len(path) and path[0] == "\\": path.pop(0)
-                if any(("^" in x for x in path)): # Accommodate caret notation
+                if any("^" in x for x in path): # Accommodate caret notation
                     new_path = []
                     for x in path:
                         if x.count("^"):
