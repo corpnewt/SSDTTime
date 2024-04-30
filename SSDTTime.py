@@ -500,6 +500,7 @@ class SSDT:
         ec_sta = {}
         patches = []
         lpc_name = None
+        ec_located = False
         for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
             table = self.d.acpi_tables[table_name]
             ec_list = self.d.get_device_paths_with_hid("PNP0C09",table=table)
@@ -523,22 +524,25 @@ class SSDT:
                     # We need to check for _HID, _CRS, and _GPE
                     if all(y in scope for y in ["_HID","_CRS","_GPE"]):
                         print(" ----> Valid EC Device")
-                        sta = self.get_sta_var(
-                            var=None,
-                            device=orig_device,
-                            dev_hid="PNP0C09",
-                            dev_name=orig_device.split(".")[-1],
-                            log_locate=False,
-                            table=table
-                        )
-                        if sta.get("patches"):
-                            patches.extend(sta.get("patches",[]))
-                            ec_sta[device] = sta
+                        ec_located = True
                         if not laptop:
                             ec_to_patch.append(device)
+                            # Only check for - and override _STA methods
+                            # if not building for a laptop
+                            sta = self.get_sta_var(
+                                var=None,
+                                device=orig_device,
+                                dev_hid="PNP0C09",
+                                dev_name=orig_device.split(".")[-1],
+                                log_locate=False,
+                                table=table
+                            )
+                            if sta.get("patches"):
+                                patches.extend(sta.get("patches",[]))
+                                ec_sta[device] = sta
                     else:
                         print(" ----> NOT Valid EC Device")
-        if not ec_to_patch:
+        if not ec_located:
             print(" - No valid EC devices found - only needs a Fake EC device")
         if lpc_name is None:
             lpc_name = self.get_lpc_name(skip_ec=True,skip_common_names=True)
