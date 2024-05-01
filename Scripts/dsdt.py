@@ -170,11 +170,7 @@ class DSDT:
                         if h in target_files[file]["table"]:
                             target_files[file]["table"] = h.join(target_files[file]["table"].split(h)[:-1]).rstrip()
                             break # Bail on the first match
-                    target_files[file]["lines"] = []
-                    target_files[file]["lines_no_comments"] = []
-                    for line in target_files[file]["table"].split("\n"):
-                        target_files[file]["lines"].append(line)
-                        target_files[file]["lines_no_comments"].append(self.get_line(line))
+                    target_files[file]["lines"] = target_files[file]["table"].split("\n")
                     target_files[file]["scopes"] = self.get_scopes(table=target_files[file])
                     target_files[file]["paths"] = self.get_paths(table=target_files[file])
                 with open(os.path.join(temp,file),"rb") as f:
@@ -623,7 +619,8 @@ class DSDT:
         path_list  = []
         _path      = []
         brackets = 0
-        for i,line in enumerate(table.get("lines_no_comments",[])):
+        for i,line in enumerate(table.get("lines",[])):
+            line = self.get_line(line)
             if self.is_hex(line):
                 # Skip hex
                 continue
