@@ -490,14 +490,48 @@ class SSDT:
         return None # Didn't find it
 
     def fake_ec(self, laptop = False):
-        rename = False
         if not self.ensure_dsdt():
             return
         self.u.head("Fake EC")
         print("")
         print("Locating PNP0C09 (EC) devices...")
+        # Set up a helper method to determine
+        # if an _STA needs patching based on
+        # the type and returns.
+        def sta_needs_patching(sta):
+            if not isinstance(sta,dict) or not sta.get("sta"):
+                return False
+            # Check if we have an IntObj or MethodObj
+            # _STA, and scrape for values if possible.
+            if sta.get("sta_type") == "IntObj":
+                # We got an int - see if it's force-enabled
+                try:
+                    sta_scope = table["lines"][sta["sta"][0][1]]
+                    if not "Name (_STA, 0x0F)" in sta_scope:
+                        return True
+                except Exception as e:
+                    print(e)
+                    return True
+            elif sta.get("sta_type") == "MethodObj":
+                # We got a method - if we have more than one
+                # "Return (", or not a single "Return (0x0F)",
+                # then we need to patch this out and replace
+                try:
+                    sta_scope = "\n".join(self.d.get_scope(sta["sta"][0][1],strip_comments=True,table=table))
+                    if sta_scope.count("Return (") > 1 or not "Return (0x0F)" in sta_scope:
+                        # More than one return, or our return isn't force-enabled
+                        return True
+                except Exception as e:
+                    return True
+            # If we got here - it's not a recognized type, or
+            # it was fullly qualified and doesn't need patching
+            return False
+        rename = False
+        named_ec = False
         ec_to_patch = []
+        ec_to_enable = []
         ec_sta = {}
+        ec_enable_sta = {}
         patches = []
         lpc_name = None
         ec_located = False
@@ -512,38 +546,53 @@ class SSDT:
                     device = orig_device = x[0]
                     print(" --> {}".format(device))
                     if device.split(".")[-1] == "EC":
-                        if laptop:
-                            print(" ----> Named EC device located - no fake needed.")
-                            print("")
-                            self.u.grab("Press [enter] to return to main menu...")
-                            return
-                        print(" ----> EC called EC. Renaming")
-                        device = ".".join(device.split(".")[:-1]+["EC0"])
-                        rename = True
+                        named_ec = True
+                        if not laptop:
+                            # Only rename if we're trying to replace it
+                            print(" ----> PNP0C09 (EC) called EC. Renaming")
+                            device = ".".join(device.split(".")[:-1]+["EC0"])
+                            rename = True
                     scope = "\n".join(self.d.get_scope(x[1],strip_comments=True,table=table))
                     # We need to check for _HID, _CRS, and _GPE
                     if all(y in scope for y in ["_HID","_CRS","_GPE"]):
-                        print(" ----> Valid EC Device")
+                        print(" ----> Valid PNP0C09 (EC) Device")
                         ec_located = True
+                        sta = self.get_sta_var(
+                            var=None,
+                            device=orig_device,
+                            dev_hid="PNP0C09",
+                            dev_name=orig_device.split(".")[-1],
+                            log_locate=False,
+                            table=table
+                        )
                         if not laptop:
                             ec_to_patch.append(device)
-                            # Only check for - and override _STA methods
+                            # Only unconditionally override _STA methods
                             # if not building for a laptop
-                            sta = self.get_sta_var(
-                                var=None,
-                                device=orig_device,
-                                dev_hid="PNP0C09",
-                                dev_name=orig_device.split(".")[-1],
-                                log_locate=False,
-                                table=table
-                            )
                             if sta.get("patches"):
                                 patches.extend(sta.get("patches",[]))
                                 ec_sta[device] = sta
+                        elif sta.get("patches"):
+                            if sta_needs_patching(sta):
+                                # Retain the info as we need to override it
+                                ec_to_enable.append(device)
+                                ec_enable_sta[device] = sta
+                                # Disable the patches by default and add to the list
+                                for patch in sta.get("patches",[]):
+                                    patch["Enabled"] = False
+                                    patch["Disabled"] = True
+                                    patches.append(patch)
+                            else:
+                                print(" --> _STA properly enabled - skipping rename")
                     else:
-                        print(" ----> NOT Valid EC Device")
+                        print(" ----> NOT Valid PNP0C09 (EC) Device")
         if not ec_located:
-            print(" - No valid EC devices found - only needs a Fake EC device")
+            print(" - No valid PNP0C09 (EC) devices found - only needs a Fake EC device")
+        if laptop and named_ec and not patches:
+            print(" ----> Named EC device located - no fake needed.")
+            print("")
+            self.u.grab("Press [enter] to return to main menu...")
+            return
         if lpc_name is None:
             lpc_name = self.get_lpc_name(skip_ec=True,skip_common_names=True)
         if lpc_name is None:
@@ -573,6 +622,12 @@ DefinitionBlock ("", "SSDT", 2, "CORP ", "SsdtEC", 0x00001000)
             ssdt += "    External ({}, DeviceObj)\n".format(x)
             if x in ec_sta:
                 ssdt += "    External ({}.XSTA, {})\n".format(x,ec_sta[x].get("sta_type","MethodObj"))
+        # Walk the ECs to enable
+        for x in ec_to_enable:
+            ssdt += "    External ({}, DeviceObj)\n".format(x)
+            if x in ec_enable_sta:
+                # Add the _STA and XSTA refs as the patch may not be enabled
+                ssdt += "    External ({0}._STA, {1})\n    External ({0}.XSTA, {1})\n".format(x,ec_enable_sta[x].get("sta_type","MethodObj"))
         # Walk them again and add the _STAs
         for x in ec_to_patch:
             ssdt += """
@@ -592,8 +647,31 @@ DefinitionBlock ("", "SSDT", 2, "CORP ", "SsdtEC", 0x00001000)
     }
 """.replace("[[LPCName]]",lpc_name).replace("[[ECName]]",x) \
     .replace("[[XSTA]]","{}.XSTA{}".format(x," ()" if ec_sta[x].get("sta_type","MethodObj")=="MethodObj" else "") if x in ec_sta else "0x0F")
+        # Walk them yet again - and force enable as needed
+        for x in ec_to_enable:
+            ssdt += """
+    If (LAnd (CondRefOf ([[ECName]].XSTA), LNot (CondRefOf ([[ECName]]._STA))))
+    {
+        Scope ([[ECName]])
+        {
+            Method (_STA, 0, NotSerialized)  // _STA: Status
+            {
+                If (_OSI ("Darwin"))
+                {
+                    Return (0x0F)
+                }
+                Else
+                {
+                    Return ([[XSTA]])
+                }
+            }
+        }
+    }
+""".replace("[[LPCName]]",lpc_name).replace("[[ECName]]",x) \
+    .replace("[[XSTA]]","{}.XSTA{}".format(x," ()" if ec_enable_sta[x].get("sta_type","MethodObj")=="MethodObj" else "") if x in ec_enable_sta else "Zero")
         # Create the faked EC
-        ssdt += """
+        if not laptop or not named_ec:
+            ssdt += """
     Scope ([[LPCName]])
     {
         Device (EC)
@@ -611,8 +689,10 @@ DefinitionBlock ("", "SSDT", 2, "CORP ", "SsdtEC", 0x00001000)
                 }
             }
         }
-    }
-}""".replace("[[LPCName]]",lpc_name)
+    }""".replace("[[LPCName]]",lpc_name)
+        # Close the SSDT scope
+        ssdt += """
+}"""
         self.write_ssdt("SSDT-EC",ssdt)
         print("")
         print("Done.")
