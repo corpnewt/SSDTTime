@@ -17,6 +17,7 @@ class SSDT:
         self.red = "\u001b[41;1m"
         self.yel = "\u001b[43;1m"
         self.rst = "\u001b[0m"
+        self.copy_as_path = self.u.check_admin() if os.name=="nt" else False
         if os.name == "nt":
             if 2/3==0:
                 # ANSI escapes don't seem to work properly in Windows
@@ -26,7 +27,6 @@ class SSDT:
                 os.system("color") # Allow ASNI color escapes.
             self.w = 120
             self.h = 30
-        self.iasl_legacy = False
         self.resize_window = True
         self.dsdt = None
         self.settings = os.path.join(os.path.dirname(os.path.realpath(__file__)),"Scripts","settings.json")
@@ -292,6 +292,10 @@ class SSDT:
         while True:
             self.u.head("Select ACPI Table{}".format("" if single_table else "s"))
             print(" ")
+            if self.copy_as_path:
+                print("NOTE:  Currently running as admin on Windows - drag and drop may not work.")
+                print("       Shift + right-click in Explorer and select 'Copy as path' then paste here instead.")
+                print("")
             print("M. Main")
             print("Q. Quit")
             print(" ")
@@ -2817,6 +2821,10 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
             while True:
                 self.u.head("Select DMAR Table")
                 print(" ")
+                if self.copy_as_path:
+                    print("NOTE:  Currently running as admin on Windows - drag and drop may not work.")
+                    print("       Shift + right-click in Explorer and select 'Copy as path' then paste here instead.")
+                    print("")
                 print("M. Main")
                 print("Q. Quit")
                 print(" ")
