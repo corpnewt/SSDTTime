@@ -27,6 +27,7 @@ class SSDT:
                 os.system("color") # Allow ASNI color escapes.
             self.w = 120
             self.h = 30
+        self.iasl_legacy = False
         self.resize_window = True
         self.dsdt = None
         self.settings = os.path.join(os.path.dirname(os.path.realpath(__file__)),"Scripts","settings.json")
