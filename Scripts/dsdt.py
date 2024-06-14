@@ -97,6 +97,9 @@ class DSDT:
             for x in list_dir:
                 if len(list_dir) > 1 and not self.table_is_valid(temp,x):
                     continue # Skip invalid files when multiple are passed
+                name_ext = [y for y in os.path.basename(x).split(".") if y]
+                if name_ext and name_ext[-1].lower() in ("asl","dsl"):
+                    continue # Skip any already disassembled files
                 target_files[x] = {
                     "assembled_name": os.path.basename(x),
                     "disassembled_name": ".".join(x.split(".")[:-1]) + ".dsl",
