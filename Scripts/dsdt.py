@@ -347,7 +347,9 @@ class DSDT:
                 # extension used is .aml, not the default .dat
                 print("Updating names...")
                 for f in os.listdir(res):
-                    new_name = ".DAT".join(f.upper().split(".DAT")[:-1])+".aml"
+                    new_name = f.upper()
+                    if new_name.endswith(".DAT"):
+                        new_name = new_name[:-4]+".aml"
                     if new_name != f:
                         # Something changed - print it and rename it
                         try:
