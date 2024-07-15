@@ -34,8 +34,7 @@ class SSDT:
         if os.path.exists(self.settings):
             self.load_settings()
         self.output = "Results"
-        self.legacy_irq = ["TMR","TIMR","IPIC","RTC"] # Could add HPET for extra patch-ness, but shouldn't be needed
-        self.target_irqs = [0,2,8,11]
+        self.target_irqs = [0,2,8,11,12]
         self.illegal_names = ("XHC1","EHC1","EHC2","PXSX")
         # _OSI Strings found here: https://learn.microsoft.com/en-us/windows-hardware/drivers/acpi/winacpi-osi
         self.osi_strings = {
@@ -1145,9 +1144,14 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
             print(" - Type: {}".format(hpet[0][-1]))
             # Let's find the Memory32Fixed portion within HPET's _CRS method
             print(" - Checking for Memory32Fixed...")
-            mem_base = mem_length = primed = None
+            mem_access = mem_base = mem_length = primed = None
             for line in self.d.get_scope(hpets[0][1],strip_comments=True):
                 if "Memory32Fixed (" in line:
+                    try:
+                        mem_access = line.split("(")[1].split(",")[0]
+                    except:
+                        print(" --> Could not determine memory access type!")
+                        break
                     primed = True
                     continue
                 if not primed:
@@ -1169,10 +1173,11 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                     mem_length = val
                     break # Leave after we get both values
             # Check if we found the values
-            got_mem = mem_base and mem_length
+            got_mem = mem_access and mem_base and mem_length
             if got_mem:
-                print(" --> Got {} -> {}".format(mem_base,mem_length))
+                print(" --> Got {} {} -> {}".format(mem_access,mem_base,mem_length))
             else:
+                mem_access = "ReadWrite"
                 mem_base = "0xFED00000"
                 mem_length = "0x00000400"
                 print(" --> Not located!")
@@ -1307,11 +1312,15 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
             }
             Name (_CRS, ResourceTemplate ()  // _CRS: Current Resource Settings
             {
+                // Only choose 0, and 8 to mimic a real mac's DSDT.
+                // You may optionally want to add 11 and/or 12 here if
+                // it does not work as expected - though those may have
+                // other side effects (broken trackpad or otherwise).
                 IRQNoFlags ()
-                    {0,8,11}
-                Memory32Fixed (ReadWrite,
-                    0xFED00000,         // Address Base
-                    0x00000400,         // Address Length
+                    {0,8}
+                Memory32Fixed (ReadWrite, // Access Type
+                    0xFED00000,           // Address Base
+                    0x00000400,           // Address Length
                     )
             })
         }
@@ -1320,7 +1329,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
         else:
             ssdt = """//
 // Supplementary HPET _CRS from Goldfish64
-// Requires the HPET's _CRS to XCRS rename
+// Requires at least the HPET's _CRS to XCRS rename
 //
 DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
 {
@@ -1331,12 +1340,16 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
     {
         Name (BUFX, ResourceTemplate ()
         {
+            // Only choose 0, and 8 to mimic a real mac's DSDT.
+            // You may optionally want to add 11 and/or 12 here if
+            // it does not work as expected - though those may have
+            // other side effects (broken trackpad or otherwise).
             IRQNoFlags ()
-                {0,8,11}
-            Memory32Fixed (ReadWrite,
-                // [[mem]]
-                [[mem_base]],         // Address Base
-                [[mem_length]],         // Address Length
+                {0,8}
+            // [[mem]]
+            Memory32Fixed ([[mem_access]], // Access Type
+                [[mem_base]],           // Address Base
+                [[mem_length]],           // Address Length
             )
         })
         Method (_CRS, 0, Serialized)  // _CRS: Current Resource Settings
@@ -1352,7 +1365,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "HPET", 0x00000000)
         }""" \
     .replace("[[name]]",name) \
     .replace("[[type]]","MethodObj" if hpet[0][-1] == "Method" else "BuffObj") \
-    .replace("[[mem]]","Base/Length pulled from DSDT" if got_mem else "Default Base/Length - verify with your DSDT!") \
+    .replace("[[mem]]","AccessType/Base/Length pulled from DSDT" if got_mem else "Default AccessType/Base/Length - verify with your DSDT!") \
+    .replace("[[mem_access]]",mem_access) \
     .replace("[[mem_base]]",mem_base) \
     .replace("[[mem_length]]",mem_length) \
     .replace("[[method]]"," ()" if hpet[0][-1]=="Method" else "")
