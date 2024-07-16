@@ -34,7 +34,7 @@ class SSDT:
         if os.path.exists(self.settings):
             self.load_settings()
         self.output = "Results"
-        self.target_irqs = [0,2,8,11,12]
+        self.target_irqs = [0,2,8,11]
         self.illegal_names = ("XHC1","EHC1","EHC2","PXSX")
         # _OSI Strings found here: https://learn.microsoft.com/en-us/windows-hardware/drivers/acpi/winacpi-osi
         self.osi_strings = {
