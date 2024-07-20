@@ -625,10 +625,10 @@ class DSDT:
         _path      = []
         brackets = 0
         for i,line in enumerate(table.get("lines",[])):
-            line = self.get_line(line)
             if self.is_hex(line):
                 # Skip hex
                 continue
+            line = self.get_line(line)
             brackets += line.count("{")-line.count("}")
             while len(_path):
                 # Remove any path entries that are nested
