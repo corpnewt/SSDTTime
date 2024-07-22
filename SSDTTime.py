@@ -1,12 +1,11 @@
-from Scripts import downloader, dsdt, plist, reveal, run, utils
+from Scripts import dsdt, plist, reveal, run, utils
 import getpass, os, tempfile, shutil, plistlib, sys, binascii, zipfile, re, string, json, textwrap
 
 class SSDT:
     def __init__(self, **kwargs):
-        self.dl   = downloader.Downloader()
-        self.u    = utils.Utils("SSDT Time")
-        self.r    = run.Run()
-        self.re   = reveal.Reveal()
+        self.u  = utils.Utils("SSDT Time")
+        self.r  = run.Run()
+        self.re = reveal.Reveal()
         try:
             self.d = dsdt.DSDT()
         except Exception as e:
@@ -602,7 +601,7 @@ class SSDT:
         if lpc_name is None:
             self.u.grab("Press [enter] to return to main menu...")
             return
-        comment = "SSDT-EC"
+        comment = "Faked Embedded Controller"
         if rename == True:
             patches.insert(0,{
                 "Comment":"EC to EC0{}".format("" if not ec_sta else " - must come before any EC _STA to XSTA renames!"),
