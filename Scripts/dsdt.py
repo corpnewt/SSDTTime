@@ -34,13 +34,6 @@ class DSDT:
         self.hex_match  = re.compile(r"^\s*[0-9A-F]{4,}:(\s[0-9A-F]{2})+(\s+\/\/.*)?$")
         self.type_match = re.compile(r".*(?P<type>Processor|Scope|Device|Method|Name) \((?P<name>[^,\)]+).*")
 
-    def _table_name_is_valid(self, table_name):
-            if table_name.startswith(".") or not table_name.lower().endswith(self.table_suffixes):
-                return False
-            if not table_name.lower().startswith(self.table_prefixes):
-                return False
-            return True
-
     def _table_signature(self, table_path, table_name = None):
         path = os.path.join(table_path,table_name) if table_name else table_path
         if not os.path.isfile(path):
