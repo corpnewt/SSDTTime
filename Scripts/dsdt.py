@@ -331,11 +331,22 @@ class DSDT:
                 print("Dumping tables to {}...".format(res))
                 cwd = os.getcwd()
                 os.chdir(res)
-                out = self.r.run({"args":[target, "-b"]})
+                out = self.r.run({"args":[target,"-b"]})
                 os.chdir(cwd)
                 if out[2] != 0:
                     print(" - {}".format(out[1]))
                     return
+                # Make sure we have a DSDT
+                if not next((x for x in os.listdir(res) if x.lower().startswith("dsdt.")),None):
+                    # We need to try and dump the DSDT individually - this sometimes
+                    # happens on older Windows installs or odd OEM machines
+                    print(" - DSDT not found - dumping by signature...")
+                    os.chdir(res)
+                    out = self.r.run({"args":[target,"-b","-n","DSDT"]})
+                    os.chdir(cwd)
+                    if out[2] != 0:
+                        print(" - {}".format(out[1]))
+                        return
                 # Iterate the dumped files and ensure the names are uppercase, and the
                 # extension used is .aml, not the default .dat
                 print("Updating names...")
