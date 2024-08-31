@@ -3006,7 +3006,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
             self.fix_dmar()
         elif menu.lower() == "p" and (sys.platform.startswith("linux") or sys.platform == "win32"):
             output_folder = os.path.join(os.path.dirname(os.path.realpath(__file__)),self.output)
-            acpi_name = self.get_unique_name("ACPI",output_folder,name_append="")
+            acpi_name = self.get_unique_name("OEM",output_folder,name_append="")
             self.dsdt = self.load_dsdt(
                 self.d.dump_tables(os.path.join(output_folder,acpi_name))
             )
