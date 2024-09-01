@@ -529,6 +529,19 @@ class DSDT:
         # direction can be True = forward, False = backward, None = both
         start_index = index
         line,last_index = self.get_hex_starting_at(index,table=table)
+        if last_index == -1:
+            raise Exception("Could not find hex starting at index {}!".format(index))
+        first_line = line
+        # Assume at least 1 byte of our current_hex exists at index, so we need to at
+        # least load in len(current_hex)-2 worth of data if we haven't found it.
+        while True:
+            if current_hex in line or len(line) >= len(first_line)+len(current_hex):
+                break # Assume we've hit our cap
+            new_line,_index,last_index = self.find_next_hex(last_index, table=table)
+            if last_index == -1:
+                raise Exception("Hit end of file before passed hex was located!")
+            # Append the new info
+            line += new_line
         if not current_hex in line:
             raise Exception("{} not found in table at index {}-{}!".format(current_hex,start_index,last_index))
         padl = padr = ""
