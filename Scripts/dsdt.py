@@ -244,14 +244,14 @@ class DSDT:
         # Helper to scrape https://www.intel.com/content/www/us/en/developer/topic-technology/open/acpica/download.html for the latest
         # download binaries link - then scrape the contents of that page for the actual download
         try:
-            source = self.dl.get_string(self.acpi_binary_tools, headers=self.h)
+            source = self.dl.get_string(self.acpi_binary_tools, progress=False, headers=self.h)
             for line in source.split("\n"):
                 # <a href="/content/www/us/en/download/774881/acpi-component-architecture-downloads-windows-binary-tools.html">iASL Compiler and Windows ACPI Tools
                 if "windows-binary-tools" in line and ">iasl compiler and windows acpi tools" in line.lower():
                     # Try to scrape and load the next page
                     try:
                         dl_page_url = "https://www.intel.com" + line.split('<a href="')[1].split('"')[0]
-                        dl_page_source = self.dl.get_string(dl_page_url, headers=self.h)
+                        dl_page_source = self.dl.get_string(dl_page_url, progress=False, headers=self.h)
                         for line in dl_page_source.split("\n"):
                             if '"download-button"' in line: # Should have the right line
                                 return line.split('data-href="')[1].split('"')[0]
