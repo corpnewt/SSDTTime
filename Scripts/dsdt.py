@@ -691,9 +691,14 @@ class DSDT:
         if not table: table = self.get_dsdt_or_only()
         if not table: return []
         paths = []
+        # Remove trailing underscores and normalize case
+        obj = obj.rstrip("_").upper()
+        obj_type = obj_type.lower() if obj_type else obj_type
         for path in table.get("paths",[]):
-            if path[2].lower() == obj_type.lower() and path[0].upper().endswith(obj.upper()):
-                paths.append(path)
+            if (obj_type and obj_type != path[2].lower()) or path[0].rstrip("_").upper() != obj:
+                # Type or object mismatch - skip
+                continue
+            paths.append(path)
         return sorted(paths)
 
     def get_device_paths(self, obj="HPET",table=None):
