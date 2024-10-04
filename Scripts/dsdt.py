@@ -695,7 +695,7 @@ class DSDT:
         obj = obj.rstrip("_").upper()
         obj_type = obj_type.lower() if obj_type else obj_type
         for path in table.get("paths",[]):
-            if (obj_type and obj_type != path[2].lower()) or path[0].rstrip("_").upper() != obj:
+            if (obj_type and obj_type != path[2].lower()) or not path[0].rstrip("_").upper().endswith(obj):
                 # Type or object mismatch - skip
                 continue
             paths.append(path)
