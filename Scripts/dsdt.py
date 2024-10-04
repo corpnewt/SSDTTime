@@ -691,11 +691,13 @@ class DSDT:
         if not table: table = self.get_dsdt_or_only()
         if not table: return []
         paths = []
-        # Remove trailing underscores and normalize case
-        obj = obj.rstrip("_").upper()
+        # Remove trailing underscores and normalize case for all path
+        # elements passed
+        obj = ".".join([x.rstrip("_").upper() for x in obj.split(".")])
         obj_type = obj_type.lower() if obj_type else obj_type
         for path in table.get("paths",[]):
-            if (obj_type and obj_type != path[2].lower()) or not path[0].rstrip("_").upper().endswith(obj):
+            path_check = ".".join([x.rstrip("_").upper() for x in path[0].split(".")])
+            if (obj_type and obj_type != path[2].lower()) or not path_check.endswith(obj):
                 # Type or object mismatch - skip
                 continue
             paths.append(path)
