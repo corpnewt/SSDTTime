@@ -242,12 +242,33 @@ class DSDT:
 
     def get_latest_iasl(self):
         # Helper to scrape https://www.intel.com/content/www/us/en/developer/topic-technology/open/acpica/download.html for the latest
-        # download binaries link - then scrape the contents of that page for the actual download
+        # download binaries link - then scrape the contents of that page for the actual download as needed
         try:
             source = self.dl.get_string(self.acpi_binary_tools, progress=False, headers=self.h)
             for line in source.split("\n"):
-                if "href" in line and ">iasl compiler and windows acpi tools" in line.lower():
-                    return line.split('<a href="')[1].split('"')[0]
+                if '<a href="' in line and ">iasl compiler and windows acpi tools" in line.lower():
+                    # Check if we have a direct download link - i.e. ends with .zip - or if we're
+                    # redirected to a different download page - i.e. ends with .html
+                    dl_link = line.split('<a href="')[1].split('"')[0]
+                    if dl_link.lower().endswith(".zip"):
+                        # Direct download - return as-is
+                        return dl_link
+                    elif dl_link.lower().endswith((".html",".htm")):
+                        # Redirect - try to scrape for a download link
+                        try:
+                            if dl_link.lower().startswith(("http:","https:")):
+                                # The existing link is likely complete - use it as-is
+                                dl_page_url = dl_link
+                            else:
+                                # <a href="/content/www/us/en/download/774881/acpi-component-architecture-downloads-windows-binary-tools.html">iASL Compiler and Windows ACPI Tools
+                                # Only a suffix - prepend to it
+                                dl_page_url = "https://www.intel.com" + line.split('<a href="')[1].split('"')[0]
+                            dl_page_source = self.dl.get_string(dl_page_url, progress=False, headers=self.h)
+                            for line in dl_page_source.split("\n"):
+                                if 'data-href="' in line and '"download-button"' in line:
+                                    # Should have the right line
+                                    return line.split('data-href="')[1].split('"')[0]
+                        except: pass
         except: pass
         return None
     
