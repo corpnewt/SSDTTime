@@ -2214,29 +2214,41 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         self.u.head("Building Bridges")
         print("")
         print("Gathering ACPI devices...")
-        # Let's gather our roots - and any other paths that and in _ADR
-        pci_roots = self.d.get_device_paths_with_hid(hid="PNP0A08")
-        pci_roots += self.d.get_device_paths_with_hid(hid="PNP0A03")
-        pci_roots += self.d.get_device_paths_with_hid(hid="ACPI0016")
-        paths = self.d.get_path_of_type(obj_type="Name",obj="_ADR")
-        # Let's create our dictionary device paths - starting with the roots
-        print("Generating device paths...")
         device_dict = {}
         pci_root_paths = []
-        for path in pci_roots:
-            if path[0] in device_dict: continue # Already have it
-            device_uid = self.d.get_name_paths(obj=path[0]+"._UID")
-            if device_uid and len(device_uid)==1:
-                adr = self.get_address_from_line(device_uid[0][1],split_by="_UID, ")
-            else: # Assume 0
-                adr = 0
-            device_dict[path[0]] = {"path":"PciRoot({})".format(self.hexy(adr))}
-            pci_root_paths.append(device_dict[path[0]])
-        # First - let's create a new list of tuples with the ._ADR stripped
-        # The goal here is to ensure pathing is listed in the proper order.
-        sanitized_paths = sorted([(x[0][0:-5],x[1],x[2]) for x in paths])
-        for path in sanitized_paths:
-            adr = self.get_address_from_line(path[1])
+        orphaned_devices = []
+        sanitized_paths = []
+        for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
+            table = self.d.acpi_tables[table_name]
+            # Let's gather our roots - and any other paths that and in _ADR
+            pci_roots = self.d.get_device_paths_with_hid(hid="PNP0A08",table=table)
+            pci_roots += self.d.get_device_paths_with_hid(hid="PNP0A03",table=table)
+            pci_roots += self.d.get_device_paths_with_hid(hid="ACPI0016",table=table)
+            paths = self.d.get_path_of_type(obj_type="Name",obj="_ADR",table=table)
+            # Let's create our dictionary device paths - starting with the roots
+            for path in pci_roots:
+                if path[0] in device_dict: continue # Already have it
+                device_uid = self.d.get_name_paths(obj=path[0]+"._UID",table=table)
+                if device_uid and len(device_uid)==1:
+                    adr = self.get_address_from_line(device_uid[0][1],split_by="_UID, ",table=table)
+                else: # Assume 0
+                    adr = 0
+                device_dict[path[0]] = {"path":"PciRoot({})".format(self.hexy(adr))}
+                pci_root_paths.append(device_dict[path[0]])
+            # First - let's create a new list of tuples with the ._ADR stripped
+            # The goal here is to ensure pathing is listed in the proper order.
+            sanitized_paths.extend([(
+                x[0][0:-5], # The path minus the ._ADR/._UID
+                x[1],       # The line number
+                x[2],       # The type of the match (Name, Device, Method, etc)
+                self.get_address_from_line(x[1],table=table) # Address
+            ) for x in paths])
+        print("Generating device paths...")
+        def check_path(path,device_dict):
+            # Returns a bool depending on the checks
+            # True  = added, already added, ignore
+            # False = orphaned
+            adr = path[3] # Retain the address
             adr_overflow = False
             # Let's bitshift to get both addresses
             try:
@@ -2249,13 +2261,17 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                     adr_overflow = True
                     radr2 = 0
             except:
-                continue # Bad address?
+                return True # Bad address?
             # Let's check if our path already exists
-            if path[0] in device_dict: continue # Skip
+            if path[0] in device_dict:
+                return True # Skip
             # Doesn't exist - let's see if the parent path does?
             parent = ".".join(path[0].split(".")[:-1])
             parent_device = device_dict.get(parent)
-            if not parent_device or not parent_device.get("path"): continue # No parent either - bail...
+            if not parent_device or not parent_device.get("path"):
+                # No parent either - let's keep track of the device
+                # as an orphan - and check it at the end
+                return False
             # Our parent path exists - let's copy its device_path, and append our addressing
             device_path = parent_device["path"]
             device_path += "/Pci({},{})".format(self.hexy(adr1),self.hexy(adr2))
@@ -2269,6 +2285,21 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                     dev_overflow = device_dict[path[0]].get("dev_overflow",[])
                     dev_overflow.append(path[0])
                     device_dict[path[0]]["dev_overflow"] = dev_overflow
+            return True
+        for path in sorted(sanitized_paths):
+            if not check_path(path,device_dict):
+                orphaned_devices.append(path)
+        if orphaned_devices:
+            print("Rechecking orphaned devices...")
+            while True:
+                removed = []
+                for path in orphaned_devices:
+                    if check_path(path,device_dict):
+                        removed.append(path)
+                if not removed: break
+                for r in removed:
+                    try: orphaned_devices.remove(r)
+                    except ValueError: pass
         print("Matching against {}".format(test_path))
         match = self.get_longest_match(device_dict,test_path)
         if not match:
