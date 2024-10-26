@@ -1,4 +1,4 @@
-import os, errno, tempfile, shutil, plistlib, sys, binascii, zipfile, getpass, re
+import os, errno, tempfile, shutil, plistlib, sys, binascii, zipfile, getpass, re, json
 from . import run, downloader, utils
 
 class DSDT:
@@ -10,7 +10,7 @@ class DSDT:
         self.iasl_url_macOS_legacy = "https://raw.githubusercontent.com/acidanthera/MaciASL/master/Dist/iasl-legacy"
         self.iasl_url_linux = "https://raw.githubusercontent.com/corpnewt/linux_iasl/main/iasl.zip"
         self.iasl_url_linux_legacy = "https://raw.githubusercontent.com/corpnewt/iasl-legacy/main/iasl-legacy-linux.zip"
-        self.acpi_binary_tools = "https://www.intel.com/content/www/us/en/developer/topic-technology/open/acpica/download.html"
+        self.acpi_binary_tools = "https://github.com/acpica/acpica/releases"
         self.iasl_url_windows_legacy = "https://raw.githubusercontent.com/corpnewt/iasl-legacy/main/iasl-legacy-windows.zip"
         self.h = {} # {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         self.iasl = self.check_iasl()
@@ -22,7 +22,7 @@ class DSDT:
             exception = "Could not locate or download iasl!"
             if url:
                 exception += "\n\nPlease manually download {} from:\n - {}\n\nAnd place in:\n - {}\n".format(
-                    "and extract iasl.exe and acpidump.exe" if os.name=="nt" else "iasl",
+                    "\"iasl-win-YYYYMMDD.zip\" and extract iasl.exe and acpidump.exe" if os.name=="nt" else "iasl",
                     url,
                     os.path.dirname(os.path.realpath(__file__))
                 )
@@ -241,14 +241,18 @@ class DSDT:
         return (target_files, failed,)
 
     def get_latest_iasl(self):
-        # Helper to scrape https://www.intel.com/content/www/us/en/developer/topic-technology/open/acpica/download.html for the latest
-        # download binaries link - then scrape the contents of that page for the actual download
+        url = "https://api.github.com/repos/acpica/acpica/releases"
+
         try:
-            source = self.dl.get_string(self.acpi_binary_tools, progress=False, headers=self.h)
-            for line in source.split("\n"):
-                if "href" in line and ">iasl compiler and windows acpi tools" in line.lower():
-                    return line.split('<a href="')[1].split('"')[0]
-        except: pass
+            response = self.dl.get_string(url, progress=False, headers=self.h)
+            releases = json.loads(response)
+
+            latest_release_describe = releases[0].get("body")
+
+            for line in latest_release_describe.splitlines():
+                if "iasl" in line:
+                    return line.split("(")[-1].split(")")[0]
+        except: pass            
         return None
     
     def check_iasl(self, legacy=False, try_downloading=True):
