@@ -252,7 +252,7 @@ class DSDT:
             for line in latest_release_describe.splitlines():
                 if "iasl" in line:
                     return line.split("(")[-1].split(")")[0]
-        except: pass            
+        except: pass
         return None
     
     def check_iasl(self, legacy=False, try_downloading=True):
