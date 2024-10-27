@@ -10,20 +10,21 @@ class DSDT:
         self.iasl_url_macOS_legacy = "https://raw.githubusercontent.com/acidanthera/MaciASL/master/Dist/iasl-legacy"
         self.iasl_url_linux = "https://raw.githubusercontent.com/corpnewt/linux_iasl/main/iasl.zip"
         self.iasl_url_linux_legacy = "https://raw.githubusercontent.com/corpnewt/iasl-legacy/main/iasl-legacy-linux.zip"
+        self.acpi_github_windows = "https://github.com/acpica/acpica/releases/latest"
         self.acpi_binary_tools = "https://www.intel.com/content/www/us/en/developer/topic-technology/open/acpica/download.html"
         self.iasl_url_windows_legacy = "https://raw.githubusercontent.com/corpnewt/iasl-legacy/main/iasl-legacy-windows.zip"
         self.h = {} # {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         self.iasl = self.check_iasl()
         self.iasl_legacy = self.check_iasl(legacy=True)
         if not self.iasl:
-            url = self.acpi_binary_tools if os.name=="nt" else \
+            url = (self.acpi_github_windows,self.acpi_binary_tools) if os.name=="nt" else \
             self.iasl_url_macOS if sys.platform=="darwin" else \
             self.iasl_url_linux if sys.platform.startswith("linux") else None
             exception = "Could not locate or download iasl!"
             if url:
                 exception += "\n\nPlease manually download {} from:\n - {}\n\nAnd place in:\n - {}\n".format(
                     "and extract iasl.exe and acpidump.exe" if os.name=="nt" else "iasl",
-                    url,
+                    "\n - ".join(url) if isinstance(url,(list,tuple)) else url,
                     os.path.dirname(os.path.realpath(__file__))
                 )
             raise Exception(exception)
@@ -241,6 +242,37 @@ class DSDT:
         return (target_files, failed,)
 
     def get_latest_iasl(self):
+        # First try getting from github - if that fails, fall back to intel.com
+        try:
+            source = self.dl.get_string(self.acpi_github_windows, progress=False, headers=self.h)
+            assets_url = None
+            # Check for attachments first
+            for line in source.split("\n"):
+                if '<a href="https://github.com/user-attachments/files/' in line \
+                and "/iasl-win-" in line and '.zip"' in line:
+                    # We found it - return the URL
+                    return line.split('<a href="')[1].split('"')[0]
+                if 'src="' in line and "expanded_assets" in line:
+                    # Save the URL for later in case we need it
+                    assets_url = line.split('src="')[1].split('"')[0]
+            # If we got here - we didn't find the link in the attachments,
+            # check in the expanded assets
+            if assets_url:
+                source = self.dl.get_string(assets_url, progress=False, headers=self.h)
+                iasl = acpidump = None # Placeholders
+                for line in source.split("\n"):
+                    # Check for any required assets
+                    if '<a href="/acpica/acpica/releases/download/' in line:
+                        # Check if we got iasl.exe or acpidump.exe
+                        if '/iasl.exe"' in line:
+                            iasl = "https://github.com{}".format(line.split('"')[1].split('"')[0])
+                        if '/acpidump.exe"' in line:
+                            acpidump = "https://github.com{}".format(line.split('"')[1].split('"')[0])
+                if iasl and acpidump:
+                    # Got the needed files, return them
+                    return (iasl,acpidump)
+            # If we got here - move on to intel.com
+        except: pass
         # Helper to scrape https://www.intel.com/content/www/us/en/developer/topic-technology/open/acpica/download.html for the latest
         # download binaries link - then scrape the contents of that page for the actual download as needed
         try:
@@ -308,27 +340,30 @@ class DSDT:
         return self.check_iasl(legacy=legacy,try_downloading=False)
 
     def _download_and_extract(self, temp, url):
-        ztemp = tempfile.mkdtemp(dir=temp)
-        zfile = os.path.basename(url)
-        print("Downloading {}".format(os.path.basename(url)))
-        self.dl.stream_to_file(url, os.path.join(ztemp,zfile), progress=False, headers=self.h)
-        search_dir = ztemp
-        if zfile.lower().endswith(".zip"):
-            print(" - Extracting")
-            search_dir = tempfile.mkdtemp(dir=temp)
-            # Extract with built-in tools \o/
-            with zipfile.ZipFile(os.path.join(ztemp,zfile)) as z:
-                z.extractall(search_dir)
         script_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)))
-        for x in os.listdir(search_dir):
-            if x.lower().startswith(("iasl","acpidump")):
-                # Found one
-                print(" - Found {}".format(x))
-                if sys.platform != "win32":
-                    print("   - Chmod +x")
-                    self.r.run({"args":["chmod","+x",os.path.join(search_dir,x)]})
-                print("   - Copying to {} directory".format(os.path.basename(script_dir)))
-                shutil.copy(os.path.join(search_dir,x), os.path.join(script_dir,x))
+        if not isinstance(url,(tuple,list)):
+            url = (url,) # Wrap in a tuple
+        for u in url:
+            ztemp = tempfile.mkdtemp(dir=temp)
+            zfile = os.path.basename(u)
+            print("Downloading {}".format(zfile))
+            self.dl.stream_to_file(u, os.path.join(ztemp,zfile), progress=False, headers=self.h)
+            search_dir = ztemp
+            if zfile.lower().endswith(".zip"):
+                print(" - Extracting")
+                search_dir = tempfile.mkdtemp(dir=temp)
+                # Extract with built-in tools \o/
+                with zipfile.ZipFile(os.path.join(ztemp,zfile)) as z:
+                    z.extractall(search_dir)
+            for x in os.listdir(search_dir):
+                if x.lower().startswith(("iasl","acpidump")):
+                    # Found one
+                    print(" - Found {}".format(x))
+                    if sys.platform != "win32":
+                        print("   - Chmod +x")
+                        self.r.run({"args":["chmod","+x",os.path.join(search_dir,x)]})
+                    print("   - Copying to {} directory".format(os.path.basename(script_dir)))
+                    shutil.copy(os.path.join(search_dir,x), os.path.join(script_dir,x))
 
     def dump_tables(self, output, disassemble=False):
         # Helper to dump all ACPI tables to the specified
