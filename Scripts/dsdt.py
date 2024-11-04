@@ -188,12 +188,15 @@ class DSDT:
                     target_files[file]["oem"]       = table_bytes[10:16].rstrip(b"\x00")
                     target_files[file]["id"]        = table_bytes[16:24].rstrip(b"\x00")
                     target_files[file]["oem_revision"] = int(binascii.hexlify(table_bytes[24:28][::-1]),16)
-                    # Cast as int on py2, and decode bytes to strings on py3
+                    # Cast as int on py2, and try to decode bytes to strings on py3
                     if 2/3==0:
                         target_files[file]["revision"] = int(binascii.hexlify(target_files[file]["revision"]),16)
                     else:
                         for key in ("signature","oem","id"):
-                            target_files[file][key] = target_files[file][key].decode()
+                            try:
+                                target_files[file][key] = target_files[file][key].decode()
+                            except Exception:
+                                pass
                 # The disassembler omits the last line of hex data in a mixed listing
                 # file... convenient.  However - we should be able to reconstruct this
                 # manually.
