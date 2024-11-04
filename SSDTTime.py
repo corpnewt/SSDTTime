@@ -970,6 +970,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
 
     def get_data(self, data):
         if sys.version_info >= (3, 0):
+            if not isinstance(data,bytes):
+                data = data.encode()
             return data
         else:
             return plistlib.Data(data)
@@ -1005,8 +1007,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         zero = self.get_data(self.d.get_hex_bytes("00000000"))
         # We need to convert the table id and signature to data
         t_id = drop.get("TableId")
-        t_id = self.get_data(t_id.encode()) if t_id else zero
-        sig  = self.get_data((drop.get("Signature") or "SSDT").encode())
+        t_id = self.get_data(t_id) if t_id else zero
+        sig  = self.get_data((drop.get("Signature") or "SSDT"))
         return {
             "All":            drop.get("All",False),
             "Comment":        drop["Comment"],
