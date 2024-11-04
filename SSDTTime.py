@@ -431,7 +431,7 @@ class SSDT:
             else:
                 print(" -> Adding \"{}\" to OC plist!".format(d["Comment"]))
                 oc_plist["ACPI"]["Delete"].append(ocd)
-            name = " - ".join([x for x in (cd.get("Signature",""),cd.get("TableId","")) if x])
+            name = " - ".join([x for x in (cd.get("Signature",""),cd.get("TableId","").strip()) if x])
             if any(x.get("Signature") == cd.get("Signature") and x.get("TableId") == cd.get("TableId") for x in cl_plist["ACPI"]["DropTables"]):
                 print(" -> \"{}\" already in Clover plist!".format(name or "Unknown Dropped Table"))
             else:
@@ -968,13 +968,13 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                     irq_list.add(int(y))
         return sorted(list(irq_list))
 
-    def get_data(self, data):
+    def get_data(self, data, pad_to=0):
         if sys.version_info >= (3, 0):
             if not isinstance(data,bytes):
                 data = data.encode()
-            return data
+            return data+b"\x00"*(max(pad_to-len(data),0))
         else:
-            return plistlib.Data(data)
+            return plistlib.Data(data+b"\x00"*(max(pad_to-len(data),0)))
 
     def get_clover_patch(self, patch):
         return {
@@ -985,7 +985,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         }
 
     def get_oc_patch(self, patch):
-        zero = self.get_data(self.d.get_hex_bytes("00000000"))
+        zero = self.d.get_hex_bytes("00000000")
         return {
             "Base":           "",
             "BaseSkip":       0,
@@ -995,27 +995,23 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
             "Find":           self.get_data(self.d.get_hex_bytes(patch["Find"])),
             "Limit":          0,
             "Mask":           self.get_data(b""),
-            "OemTableId":     zero,
+            "OemTableId":     self.get_data(patch.get("TableId",zero),pad_to=8),
             "Replace":        self.get_data(self.d.get_hex_bytes(patch["Replace"])),
             "ReplaceMask":    self.get_data(b""),
             "Skip":           0,
             "TableLength":    0,
-            "TableSignature": zero
+            "TableSignature": self.get_data(patch.get("TableSignature",zero),pad_to=4)
         }
 
     def get_oc_drop(self, drop):
-        zero = self.get_data(self.d.get_hex_bytes("00000000"))
-        # We need to convert the table id and signature to data
-        t_id = drop.get("TableId")
-        t_id = self.get_data(t_id) if t_id else zero
-        sig  = self.get_data((drop.get("Signature") or "SSDT"))
+        zero = self.d.get_hex_bytes("00000000")
         return {
             "All":            drop.get("All",False),
             "Comment":        drop["Comment"],
             "Enabled":        drop.get("Enabled",True),
-            "OemTableId":     t_id,
+            "OemTableId":     self.get_data(drop.get("TableId",zero),pad_to=8),
             "TableLength":    drop.get("Length",0),
-            "TableSignature": sig
+            "TableSignature": self.get_data(drop.get("Signature","SSDT"),pad_to=4)
         }
 
     def get_clover_drop(self, drop):
@@ -2950,7 +2946,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         }
         drop = ({
             "Comment":"Drop DMAR Table",
-            "Signature":"DMAR"
+            "Signature":"DMAR",
+            "TableId":dmar.get("id","00000000")
         },)
         self.make_plist(oc, "DMAR.aml", (), drops=drop)
         print("")
