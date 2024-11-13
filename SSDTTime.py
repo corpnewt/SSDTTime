@@ -785,11 +785,26 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
 
     Scope ([[parent]])
     {""".replace("[[parent]]",parent)
+                # Ensure our name scheme won't conflict
+                schemes = ("C000","CP00","P000","PR00","CX00","PX00")
                 # Walk the processor objects, and add them to the SSDT
                 for i,proc_uid in enumerate(proc_list):
                     proc,uid = proc_uid
                     adr = hex(i)[2:].upper()
-                    name = "CP00"[:-len(adr)]+adr
+                    name = None
+                    for s in schemes:
+                        name_check = s[:-len(adr)]+adr
+                        check_path = "{}.{}".format(parent,name_check)
+                        if self.d.get_path_of_type(obj_type="Device",obj=check_path,table=table):
+                            continue # Already defined - skip
+                        # If we got here - we found an unused name
+                        name = name_check
+                        break
+                    if not name:
+                        print(" - Could not find an available name scheme! Aborting.")
+                        print("")
+                        self.u.grab("Press [enter] to return to main menu...")
+                        return
                     ssdt+="""
         Processor ([[name]], [[uid]], 0x00000510, 0x06)
         {
