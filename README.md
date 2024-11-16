@@ -26,6 +26,8 @@ Supports macOS, Linux and Windows
     - _OSI rename and patch to return true for a range of Windows versions - also checks for OSID
 - DMAR
     - Remove Reserved Memory Regions from the DMAR table
+- SSDT-SBUS-MCHC
+    - System Management Bus compatibility table
     
 Additionally on Linux and Windows the tool can be used to dump the system DSDT.
 
