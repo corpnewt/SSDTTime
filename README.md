@@ -27,7 +27,7 @@ Supports macOS, Linux and Windows
 - DMAR
     - Remove Reserved Memory Regions from the DMAR table
 - SSDT-SBUS-MCHC
-    - System Management Bus compatibility table
+    - Defines an MCHC and BUS0 device for SMBus compatibility
     
 Additionally on Linux and Windows the tool can be used to dump the system DSDT.
 
