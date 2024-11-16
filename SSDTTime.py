@@ -2971,6 +2971,156 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         self.u.grab("Press [enter] to return...")
         return
 
+    def smbus(self):
+        if not self.ensure_dsdt():
+            return
+        self.u.head("SMBus")
+        print("")
+        print("Locating bus devices at 0x001F0004 or 0x00140000...")
+        bus_path = bus_parent = None
+        def get_bus_at_adr(target_adr=0x001F0004):
+            # Helper to walk tables looking for device + parent at a
+            # provided address
+            for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
+                table = self.d.acpi_tables[table_name]
+                paths = self.d.get_path_of_type(obj_type="Name",obj="_ADR",table=table)
+                for path in paths:
+                    adr = self.get_address_from_line(path[1],table=table)
+                    # Check by address
+                    # - Intel tables seem to have it at 0x001F0004
+                    # - AMD tables seem to have it at 0x00140000
+                    #   Though this matches Intel chipset USB 3 controllers
+                    #   so we'll need to also check names and such.
+                    if adr == target_adr:
+                        # Ensure our path minus ._ADR is not top level, that we
+                        # didn't match any devices with "XHC" in their name, and
+                        # then return the path + parent path + table name
+                        path_parts = path[0].split(".")[:-1]
+                        if len(path_parts) > 1 and not "XHC" in path_parts[-1]:
+                            bus_path = ".".join(path_parts)
+                            bus_parent = ".".join(path_parts[:-1])
+                            return (bus_path,bus_parent,table_name)
+        # Check 0x001F0004 first
+        adr = 0x001F0004
+        bus_check = get_bus_at_adr(adr)
+        if not bus_check:
+            # Check at 0x00140000 next
+            adr = 0x00140000
+            bus_check = get_bus_at_adr(adr)
+        if not bus_check:
+            # Never found it - report the error and bail
+            print(" - Could not locate a valid bus device! Aborting.")
+            print("")
+            self.u.grab("Press [enter] to return to main menu...")
+            return
+        # Break out our vars
+        bus_path,bus_parent,table_name = bus_check
+        print(" - Located {} (0x{}) in {}".format(
+            bus_path,
+            hex(adr)[2:].upper().rjust(8,"0"),
+            table_name)
+        )
+        print("Creating SSDT-SBUS-MCHC...")
+        # At this point - we have both paths, let's build our table
+        ssdt = """/*
+ * SMBus compatibility table.
+ * Original from: https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/Source/SSDT-SBUS-MCHC.dsl
+ */
+DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
+{
+    External ([[bus_parent]], DeviceObj)
+    External ([[bus_parent]].MCHC, DeviceObj)
+    External ([[bus_path]], DeviceObj)
+
+    // Only create MCHC if it doesn't already exist
+    If (LNot (CondRefOf ([[bus_parent]].MCHC)))
+    {
+        Scope ([[bus_parent]])
+        {
+            Device (MCHC)
+            {
+                Name (_ADR, Zero)  // _ADR: Address
+                Method (_STA, 0, NotSerialized)  // _STA: Status
+                {
+                    If (_OSI ("Darwin"))
+                    {
+                        Return (0x0F)
+                    }
+                    Else
+                    {
+                        Return (Zero)
+                    }
+                }
+            }
+        }
+    }
+
+    Device ([[bus_path]].BUS0)
+    {
+        Name (_CID, "smbus")  // _CID: Compatible ID
+        Name (_ADR, Zero)  // _ADR: Address
+
+        /*
+        * Uncomment replacing 0x57 with your own value which might be found
+        * in SMBus section of Intel datasheet for your motherboard.
+        *
+        * The "diagsvault" is the diagnostic vault where messages are stored.
+        * It's located at address 87 (0x57) on the SMBus controller.
+        * While "diagsvault" may refer to diags, a hardware diagnosis program via EFI for Macs
+        * that communicates with the SMBus controller, the effect is really unknown for hacks.
+        * Uncomment this with caution.
+        */
+
+        /**
+        Device (DVL0)
+        {
+            Name (_ADR, 0x57)  // _ADR: Address
+            Name (_CID, "diagsvault")  // _CID: Compatible ID
+            Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+            {
+                If (!Arg2)
+                {
+                    Return (Buffer (One)
+                    {
+                        0x57                                             // W
+                    })
+                }
+
+                Return (Package (0x02)
+                {
+                    "address", 
+                    0x57
+                })
+            }
+        }
+        **/
+
+        Method (_STA, 0, NotSerialized)  // _STA: Status
+        {
+            If (_OSI ("Darwin"))
+            {
+                Return (0x0F)
+            }
+            Else
+            {
+                Return (Zero)
+            }
+        }
+    }
+}""".replace("[[bus_parent]]",bus_parent).replace("[[bus_path]]",bus_path)
+        oc = {
+            "Comment":"Defines an MCHC and BUS0 device for SMBus compatibility",
+            "Enabled":True,
+            "Path":"SSDT-SBUS-MCHC.aml"
+        }
+        self.write_ssdt("SSDT-SBUS-MCHC",ssdt)
+        self.make_plist(oc, "SSDT-SBUS-MCHC.aml", ())
+        print("")
+        print("Done.")
+        self.patch_warn()
+        self.u.grab("Press [enter] to return...")
+        return
+
     def main(self):
         cwd = os.getcwd()
         lines=[""]
@@ -3002,6 +3152,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         lines.append("A. XOSI          - _OSI rename and patch to return true for a range of Windows")
         lines.append("                   versions - also checks for OSID")
         lines.append("B. Fix DMAR      - Remove Reserved Memory Regions from the DMAR table")
+        lines.append("C. SMBus         - System Management Bus compatibility table")
         lines.append("")
         if sys.platform.startswith("linux") or sys.platform == "win32":
             lines.append("P. Dump the current system's ACPI tables")
@@ -3049,6 +3200,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
             self.ssdt_xosi()
         elif menu.lower() == "b":
             self.fix_dmar()
+        elif menu.lower() == "c":
+            self.smbus()
         elif menu.lower() == "p" and (sys.platform.startswith("linux") or sys.platform == "win32"):
             output_folder = os.path.join(os.path.dirname(os.path.realpath(__file__)),self.output)
             acpi_name = self.get_unique_name("OEM",output_folder,name_append="")
