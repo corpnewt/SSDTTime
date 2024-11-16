@@ -3152,7 +3152,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
         lines.append("A. XOSI          - _OSI rename and patch to return true for a range of Windows")
         lines.append("                   versions - also checks for OSID")
         lines.append("B. Fix DMAR      - Remove Reserved Memory Regions from the DMAR table")
-        lines.append("C. SMBus         - System Management Bus compatibility table")
+        lines.append("C. SMBus         - Defines an MCHC and BUS0 device for SMBus compatibility")
         lines.append("")
         if sys.platform.startswith("linux") or sys.platform == "win32":
             lines.append("P. Dump the current system's ACPI tables")
