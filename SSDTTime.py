@@ -1148,7 +1148,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
             name = hpets[0][0]
             print(" - Located at {}".format(name))
             # Let's locate any _STA methods
-            sta = self.get_sta_var(var=None,dev_hid="PNP0103",dev_name="HPET",log_locate=False)
+            sta = self.get_sta_var(var=None,dev_hid="PNP0103",dev_name="HPET")
             if sta.get("patches"):
                 hpet_sta = True
                 patches.extend(sta.get("patches",[]))
@@ -1227,6 +1227,11 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         if target_irqs is None: return # Bailed, going to the main menu
         self.u.head("Creating IRQ Patches")
         print("")
+        if sta and sta.get("patches"):
+            print(" - {} _STA to XSTA Rename:".format(sta["dev_name"]))
+            print("      Find: {}".format(sta["patches"][0]["Find"]))
+            print("   Replace: {}".format(sta["patches"][0]["Replace"]))
+            print("")
         if not hpet_fake:
             print(" - {} _CRS to XCRS Rename:".format(name.split(".")[-1].lstrip("\\")))
             print("      Find: {}".format(padl+crs+padr))
