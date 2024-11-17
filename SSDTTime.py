@@ -2383,7 +2383,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         if not match:
             if pci_root_paths:
                 print(" - No matches found!  Your device path must start with one of the")
-                print("   following PciRoot() options to match the passed DSDT:")
+                print("   following PciRoot() options to match the passed ACPI tables:")
                 for p in pci_root_paths:
                     print("   --> {}".format(p.get("path",p)))
             else:
