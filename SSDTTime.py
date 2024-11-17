@@ -165,7 +165,8 @@ class SSDT:
                 print("Multiple files with DSDT signature passed:")
                 for d in self.sorted_nicely(dsdt_list):
                     print(" - {}".format(d))
-                print("\nOnly one is allowed at a time.  Please remove one of the above and try again.")
+                print("\nOnly one is allowed at a time.  Please remove all but one of the above and try")
+                print("again.")
                 print("")
                 self.u.grab("Press [enter] to return...")
                 # Restore any prior tables
@@ -240,7 +241,15 @@ class SSDT:
                     with open(trouble_path,"wb") as f:
                         f.write(d) # Write the updated file
                     # Attempt to load again
-                    if self.d.load(trouble_path)[0]:
+                    loaded_table = self.d.load(trouble_path)[0]
+                    if loaded_table:
+                        try:
+                            table = loaded_table[list(loaded_table)[0]]
+                            for p in patches:
+                                for a,b in (("signature","Signature"),("id","TableId")):
+                                    if table.get(a): p[b] = table[a]
+                        except:
+                            pass
                         fixed = True
                         # We got it to load - let's write the patches
                         print("\nDisassembled successfully!\n")
@@ -1015,7 +1024,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
             "ReplaceMask":    self.get_data(b""),
             "Skip":           0,
             "TableLength":    0,
-            "TableSignature": self.get_data(patch.get("TableSignature",zero),pad_to=4)
+            "TableSignature": self.get_data(patch.get("Signature",zero),pad_to=4)
         }
 
     def get_oc_drop(self, drop):
@@ -1132,6 +1141,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         patches = []
         hpet_sta = False
         sta = None
+        table = self.d.get_dsdt_or_only()
+        table_id  = table.get("id",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8))
+        signature = table.get("signature",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
         if hpets:
             name = hpets[0][0]
             print(" - Located at {}".format(name))
@@ -1197,7 +1209,13 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
             crs  = "5F435253"
             xcrs = "58435253"
             padl,padr = self.d.get_shortest_unique_pad(crs, crs_index)
-            patches.append({"Comment":"{} _CRS to XCRS Rename".format(name.split(".")[-1].lstrip("\\")),"Find":padl+crs+padr,"Replace":padl+xcrs+padr})
+            patches.append({
+                "Comment":"{} _CRS to XCRS Rename".format(name.split(".")[-1].lstrip("\\")),
+                "Find":padl+crs+padr,
+                "Replace":padl+xcrs+padr,
+                "TableId":table_id,
+                "Signature":signature
+            })
         else:
             print(" - None located!")
             name = self.get_lpc_name(skip_ec=True,skip_common_names=True)
@@ -1268,7 +1286,13 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                     patch_name = "{} IRQ {} Patch".format(x, p["remd"])
                     if len(unique_patches[x]) > 1:
                         patch_name += " - {} of {}".format(i+1, len(unique_patches[x]))
-                    patches.append({"Comment":patch_name,"Find":p["find"],"Replace":p["repl"]})
+                    patches.append({
+                        "Comment":patch_name,
+                        "Find":p["find"],
+                        "Replace":p["repl"],
+                        "TableId":table_id,
+                        "Signature":signature
+                    })
                     print(" - {}".format(patch_name))
                     print("      Find: {}".format(p["find"]))
                     print("   Replace: {}".format(p["repl"]))
@@ -1284,7 +1308,15 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
             print("")
             for i,x in enumerate(generic_set):
                 patch_name = "Generic IRQ Patch {} of {} - {} - {}".format(i+1,len(generic_set),x["remd"],x["orig"])
-                patches.append({"Comment":patch_name,"Find":x["find"],"Replace":x["repl"],"Disabled":True,"Enabled":False})
+                patches.append({
+                    "Comment":patch_name,
+                    "Find":x["find"],
+                    "Replace":x["repl"],
+                    "Disabled":True,
+                    "Enabled":False,
+                    "TableId":table_id,
+                    "Signature":signature
+                })
                 print(" - {}".format(patch_name))
                 print("      Find: {}".format(x["find"]))
                 print("   Replace: {}".format(x["repl"]))
@@ -1474,6 +1506,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         #
         # Returns a dict with device info - only "valid" parameter is
         # guaranteed.
+        table = table or self.d.get_dsdt_or_only()
         has_var = False
         patches = []
         root = None
@@ -1521,7 +1554,13 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
             sta_hex  = "5F535441" # _STA
             xsta_hex = "58535441" # XSTA
             padl,padr = self.d.get_shortest_unique_pad(sta_hex,sta_index,table=table)
-            patches.append({"Comment":"{} _STA to XSTA Rename".format(dev_name),"Find":padl+sta_hex+padr,"Replace":padl+xsta_hex+padr})
+            patches.append({
+                "Comment":"{} _STA to XSTA Rename".format(dev_name),
+                "Find":padl+sta_hex+padr,
+                "Replace":padl+xsta_hex+padr,
+                "TableId":table.get("id",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
+                "Signature":table.get("signature",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
+            })
         return {"valid":True,"has_var":has_var,"sta":sta,"patches":patches,"device":dev,"dev_name":dev_name,"dev_hid":dev_hid,"root":root,"sta_type":sta_type}
 
     def ssdt_awac(self):
@@ -1533,6 +1572,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         rtc_crs_type = None
         crs_lines = []
         lpc_name = None
+        table = self.d.get_dsdt_or_only()
         awac_dict = self.get_sta_var(var="STAS",dev_hid="ACPI000E",dev_name="AWAC")
         rtc_dict = self.get_sta_var(var="STAS",dev_hid="PNP0B00",dev_name="RTC")
         # At this point - we should have any info about our AWAC and RTC devices
@@ -1603,7 +1643,13 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
                     xcrs_hex = "58435253" # XCRS
                     padl,padr = self.d.get_shortest_unique_pad(crs_hex, crs_index)
                     patches = rtc_dict.get("patches",[])
-                    patches.append({"Comment":"{} _CRS to XCRS Rename".format(rtc_dict["dev_name"]),"Find":padl+crs_hex+padr,"Replace":padl+xcrs_hex+padr})
+                    patches.append({
+                        "Comment":"{} _CRS to XCRS Rename".format(rtc_dict["dev_name"]),
+                        "Find":padl+crs_hex+padr,
+                        "Replace":padl+xcrs_hex+padr,
+                        "TableId":table.get("id",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
+                        "Signature":table.get("signature",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
+                    })
                     rtc_dict["patches"] = patches
                     rtc_dict["crs"] = True
             else:
@@ -1791,6 +1837,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
         self.u.head("USB Reset")
         print("")
         print("Gathering RHUB/HUBN/URTH devices...")
+        table = self.d.get_dsdt_or_only()
         rhubs = self.d.get_device_paths("RHUB")
         rhubs.extend(self.d.get_device_paths("HUBN"))
         rhubs.extend(self.d.get_device_paths("URTH"))
@@ -1833,7 +1880,13 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
                 sta_hex  = "5F535441"
                 xsta_hex = "58535441"
                 padl,padr = self.d.get_shortest_unique_pad(sta_hex, sta_index)
-                patches.append({"Comment":"{} _STA to XSTA Rename".format(task["device"].split(".")[-1]),"Find":padl+sta_hex+padr,"Replace":padl+xsta_hex+padr})
+                patches.append({
+                    "Comment":"{} _STA to XSTA Rename".format(task["device"].split(".")[-1]),
+                    "Find":padl+sta_hex+padr,
+                    "Replace":padl+xsta_hex+padr,
+                    "TableId":table.get("id",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
+                    "Signature":table.get("signature",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
+                })
             # Let's try to get the _ADR
             scope_adr = self.d.get_name_paths(task["device"]+"._ADR")
             task["address"] = self.d.get_dsdt_or_only()["lines"][scope_adr[0][1]].strip() if len(scope_adr) else "Name (_ADR, Zero)  // _ADR: Address"
@@ -2026,6 +2079,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
     def ssdt_xosi(self):
         if not self.ensure_dsdt():
             return
+        table = self.d.get_dsdt_or_only()
         # Let's see what, if any, the highest version contained in the DSDT is
         highest_osi = None
         for x in self.osi_strings:
@@ -2110,7 +2164,13 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         if osid:
             print(" - Located {} Method at offset {}".format(osid[0][0],osid[0][1]))
             print(" - Creating OSID to XSID rename...")
-            patches.append({"Comment":"OSID to XSID rename - must come before _OSI to XOSI rename!","Find":"4F534944","Replace":"58534944"})
+            patches.append({
+                "Comment":"OSID to XSID rename - must come before _OSI to XOSI rename!",
+                "Find":"4F534944",
+                "Replace":"58534944",
+                "TableId":table.get("id",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
+                "Signature":table.get("signature",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
+            })
         else:
             print(" - Not found, no OSID to XSID rename needed")
         print("Creating _OSI to XOSI rename...")
@@ -2675,7 +2735,11 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
             table = self.d.acpi_tables[table_name]
             if "PNLF" in table["table"]:
                 print("PNLF detected in {} - generating rename...".format(table_name))
-                patches.append({"Comment":"PNLF to XNLF Rename","Find":"504E4C46","Replace":"584E4C46"})
+                patches.append({
+                    "Comment":"PNLF to XNLF Rename",
+                    "Find":"504E4C46",
+                    "Replace":"584E4C46"
+                })
                 break
         # Checks for Name (NBCF, Zero) or Name (NBCF, 0x00)
         nbcf_old = binascii.unhexlify("084E4243460A00")
@@ -2921,6 +2985,12 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
             # Check for a non-reserved memory region subtable type
             elif "Subtable Type : " in line:
                 reserved = False
+            elif 'Oem ID : "' in line:
+                # Got the OEM - replace with CORP
+                line = line.split('"')[0] + '"CORP"'
+            elif 'Oem Table ID : "' in line:
+                # Got the OEM Table ID - replace with DMAR
+                line = line.split('"')[0] + '"DMAR"'
             # Only append if we're not in a reserved memory region
             if not reserved:
                 # Ensure any digits in Reserved : XX fields are 0s
