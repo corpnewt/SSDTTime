@@ -28,8 +28,8 @@ class DSDT:
                     os.path.dirname(os.path.realpath(__file__))
                 )
             raise Exception(exception)
-        self.allowed_signatures = ("APIC","DMAR","DSDT","SSDT")
-        self.mixed_listing      = ("DSDT","SSDT")
+        self.allowed_signatures = (b"APIC",b"DMAR",b"DSDT",b"SSDT")
+        self.mixed_listing      = (b"DSDT",b"SSDT")
         self.acpi_tables = {}
         # Setup regex matches
         self.hex_match  = re.compile(r"^\s*[0-9A-F]{4,}:(\s[0-9A-F]{2})+(\s+\/\/.*)?$")
@@ -44,7 +44,6 @@ class DSDT:
         with open(path,"rb") as f:
             try:
                 sig = f.read(4)
-                if 2/3!=0: sig = sig.decode()
                 return sig
             except:
                 pass
@@ -52,6 +51,22 @@ class DSDT:
 
     def table_is_valid(self, table_path, table_name = None):
         return self._table_signature(table_path,table_name=table_name) in self.allowed_signatures
+
+    def get_ascii_print(self, data):
+        # Helper to sanitize unprintable characters by replacing them with
+        # ? where needed
+        unprintables = False
+        ascii_string = ""
+        for b in data:
+            if not isinstance(b,int):
+                try: b = ord(b)
+                except: pass
+            if ord(" ") <= b < ord("~"):
+                ascii_string += chr(b)
+            else:
+                ascii_string += "?"
+                unprintables = True
+        return (unprintables,ascii_string)
 
     def load(self, table_path):
         # Attempt to load the passed file - or if a directory
@@ -185,18 +200,17 @@ class DSDT:
                     # 
                     target_files[file]["signature"] = table_bytes[0:4]
                     target_files[file]["revision"]  = table_bytes[8]
-                    target_files[file]["oem"]       = table_bytes[10:16].rstrip(b"\x00")
-                    target_files[file]["id"]        = table_bytes[16:24].rstrip(b"\x00")
+                    target_files[file]["oem"]       = table_bytes[10:16]
+                    target_files[file]["id"]        = table_bytes[16:24]
                     target_files[file]["oem_revision"] = int(binascii.hexlify(table_bytes[24:28][::-1]),16)
+                    # Get the printable versions of the sig, oem, and id as needed
+                    for key in ("signature","oem","id"):
+                        unprintable,ascii_string = self.get_ascii_print(target_files[file][key])
+                        if unprintable:
+                            target_files[file][key+"_ascii"] = ascii_string
                     # Cast as int on py2, and try to decode bytes to strings on py3
                     if 2/3==0:
                         target_files[file]["revision"] = int(binascii.hexlify(target_files[file]["revision"]),16)
-                    else:
-                        for key in ("signature","oem","id"):
-                            try:
-                                target_files[file][key] = target_files[file][key].decode()
-                            except Exception:
-                                pass
                 # The disassembler omits the last line of hex data in a mixed listing
                 # file... convenient.  However - we should be able to reconstruct this
                 # manually.
@@ -465,13 +479,21 @@ class DSDT:
     def get_hex_bytes(self, line):
         return binascii.unhexlify(line)
 
+    def get_str_bytes(self, value):
+        if 2/3!=0 and isinstance(value,str):
+            value = value.encode()
+        return value
+
     def get_table_with_id(self, table_id):
+        table_id = self.get_str_bytes(table_id)
         return next((v for k,v in self.acpi_tables.items() if table_id == v.get("id")),None)
 
     def get_table_with_signature(self, table_sig):
+        table_sig = self.get_str_bytes(table_sig)
         return next((v for k,v in self.acpi_tables.items() if table_sig == v.get("signature")),None)
     
     def get_table(self, table_id_or_sig):
+        table_id_or_sig = self.get_str_bytes(table_id_or_sig)
         return next((v for k,v in self.acpi_tables.items() if table_id_or_sig in (v.get("signature"),v.get("id"))),None)
 
     def get_dsdt(self):
