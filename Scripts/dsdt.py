@@ -203,6 +203,7 @@ class DSDT:
                     target_files[file]["oem"]       = table_bytes[10:16]
                     target_files[file]["id"]        = table_bytes[16:24]
                     target_files[file]["oem_revision"] = int(binascii.hexlify(table_bytes[24:28][::-1]),16)
+                    target_files[file]["length"]    = len(table_bytes)
                     # Get the printable versions of the sig, oem, and id as needed
                     for key in ("signature","oem","id"):
                         unprintable,ascii_string = self.get_ascii_print(target_files[file][key])
