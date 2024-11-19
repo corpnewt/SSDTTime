@@ -28,7 +28,11 @@ class SSDT:
             self.h = 30
         self.iasl_legacy = False
         self.resize_window = True
-        self.normalize_headers = False
+        # Set up normalize headers approach:
+        # 0 = Use table ids, don't normalize
+        # 1 = Use table ids, normalize '?'
+        # 2 = Use 0 wildcards for table ids
+        self.normalize_headers = 0
         self.dsdt = None
         self.settings = os.path.join(os.path.dirname(os.path.realpath(__file__)),"Scripts","settings.json")
         if os.path.exists(self.settings):
@@ -331,9 +335,12 @@ class SSDT:
         dsdt = dsdt or self.d
         for table in dsdt.acpi_tables.values():
             for key in ("id","signature"):
-                if self.normalize_headers:
+                if self.normalize_headers == 1:
                     # Attempt to use the _ascii variants
                     table[key+"_use"] = table.get(key+"_ascii",table[key])
+                elif self.normalize_headers == 2:
+                    # Set ids to all 0s as wild cards
+                    table[key+"_use"] = self.d.get_hex_bytes("00000000")
                 else:
                     # Restore with the originals
                     table[key+"_use"] = table[key]
@@ -3260,9 +3267,17 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
         if self.d.iasl_legacy:
             lines.append("L. Use Legacy Compiler for macOS 10.6 and prior: {}".format("{}!! Enabled !!{}".format(self.yel,self.rst) if self.iasl_legacy else "Disabled"))
         lines.append("D. Select ACPI table or folder containing tables")
-        lines.append("H. Header Normalizing: {}".format("{}!! Enabled !!{}".format(self.yel,self.rst) if self.normalize_headers else "Disabled"))
-        if self.normalize_headers:
-            lines.append("   - Only needed on OpenCore with the NormalizeHeaders quirk")
+        lines.append("H. Header Normalizing: {}".format(
+            {
+                0:"Disabled (Use Table Sig + OemTableId)",
+                1:"Enabled (Use Table Sig + OemTableId)",
+                2:"Disabled (Match Any Table Sig + OemTableId)"    
+            }.get(self.normalize_headers,"Disabled (Use Table Ids)")
+        ))
+        if self.normalize_headers == 0:
+            lines.append("   {}!! NOTE !!{} Enable for OpenCore with the NormalizeHeaders quirk".format(self.yel,self.rst))
+        elif self.normalize_headers == 1:
+            lines.append("   {}!! NOTE !!{} Only needed on OpenCore with the NormalizeHeaders quirk".format(self.yel,self.rst))
         lines.append("R. {} Window Resizing".format("Enable" if not self.resize_window else "Disable"))
         lines.append("Q. Quit")
         lines.append("")
@@ -3316,7 +3331,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
             self.iasl_legacy = not self.iasl_legacy
             self.save_settings()
         elif menu.lower() == "h":
-            self.normalize_headers ^= True
+            self.normalize_headers += 1
+            if self.normalize_headers > 2:
+                self.normalize_headers = 0
             self.save_settings()
             self._normalize_headers()
         elif menu.lower() == "r":
