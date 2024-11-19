@@ -16,13 +16,11 @@ class SSDT:
         self.red = "\u001b[41;1m"
         self.yel = "\u001b[43;1m"
         self.rst = "\u001b[0m"
-        self.copy_as_path = self.u.check_admin() if os.name=="nt" else False
+        if 2/3==0:
+            # ANSI escapes don't seem to work properly with python 2.x
+            self.red = self.yel = self.rst = ""
         if os.name == "nt":
-            if 2/3==0:
-                # ANSI escapes don't seem to work properly in Windows
-                # with python 2.x - clear them out
-                self.red = self.yel = self.rst = ""
-            else:
+            if 2/3!=0:
                 os.system("color") # Allow ASNI color escapes.
             self.w = 120
             self.h = 30
