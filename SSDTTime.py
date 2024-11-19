@@ -28,6 +28,7 @@ class SSDT:
             self.h = 30
         self.iasl_legacy = False
         self.resize_window = True
+        self.normalize_headers = False
         self.dsdt = None
         self.settings = os.path.join(os.path.dirname(os.path.realpath(__file__)),"Scripts","settings.json")
         if os.path.exists(self.settings):
@@ -90,7 +91,8 @@ class SSDT:
     def save_settings(self):
         settings = {
             "legacy_compiler": self.iasl_legacy,
-            "resize_window": self.resize_window
+            "resize_window": self.resize_window,
+            "normalize_headers": self.normalize_headers
         }
         try: json.dump(settings,open(self.settings,"w"),indent=2)
         except: return
@@ -101,6 +103,7 @@ class SSDT:
             if self.d.iasl_legacy: # Only load the legacy compiler setting if we can
                 self.iasl_legacy = settings.get("legacy_compiler",False)
             self.resize_window = settings.get("resize_window",True)
+            self.normalize_headers = settings.get("normalize_headers",False)
         except: return
 
     def get_unique_name(self,name,target_folder,name_append="-Patched"):
@@ -160,7 +163,7 @@ class SSDT:
             # We got at least one file - let's look for the DSDT specifically
             # and try to load that as-is.  If it doesn't load, we'll have to
             # manage everything with temp folders
-            dsdt_list = [x for x in tables if self.d._table_signature(path,x) == "DSDT"]
+            dsdt_list = [x for x in tables if self.d._table_signature(path,x) == b"DSDT"]
             if len(dsdt_list) > 1:
                 print("Multiple files with DSDT signature passed:")
                 for d in self.sorted_nicely(dsdt_list):
@@ -187,7 +190,7 @@ class SSDT:
                 # If it loads fine - just return the path
                 # to the parent directory
                 return os.path.dirname(path)
-            if not self.d._table_signature(path) == "DSDT":
+            if not self.d._table_signature(path) == b"DSDT":
                 # Not a DSDT, we aren't applying pre-patches
                 print("\n{} could not be disassembled!".format(os.path.basename(path)))
                 print("")
@@ -242,11 +245,12 @@ class SSDT:
                         f.write(d) # Write the updated file
                     # Attempt to load again
                     loaded_table = self.d.load(trouble_path)[0]
+                    self._normalize_headers()
                     if loaded_table:
                         try:
                             table = loaded_table[list(loaded_table)[0]]
                             for p in patches:
-                                for a,b in (("signature","Signature"),("id","TableId")):
+                                for a,b in (("signature_use","Signature"),("id_use","TableId")):
                                     if table.get(a): p[b] = table[a]
                         except:
                             pass
@@ -294,6 +298,7 @@ class SSDT:
             self.u.grab("Press [enter] to continue...")
         if temp:
             shutil.rmtree(temp,ignore_errors=True)
+        self._normalize_headers()
         return path
 
     def select_dsdt(self, single_table=False):
@@ -321,6 +326,17 @@ class SSDT:
             if not out: continue
             # Got a DSDT, try to load it
             return self.load_dsdt(out)
+
+    def _normalize_headers(self, dsdt=None):
+        dsdt = dsdt or self.d
+        for table in dsdt.acpi_tables.values():
+            for key in ("id","signature"):
+                if self.normalize_headers:
+                    # Attempt to use the _ascii variants
+                    table[key+"_use"] = table.get(key+"_ascii",table[key])
+                else:
+                    # Restore with the originals
+                    table[key+"_use"] = table[key]
 
     def _ensure_dsdt(self, allow_any=False):
         # Helper to check conditions for when we have valid tables
@@ -440,7 +456,15 @@ class SSDT:
             else:
                 print(" -> Adding \"{}\" to OC plist!".format(d["Comment"]))
                 oc_plist["ACPI"]["Delete"].append(ocd)
-            name = " - ".join([x for x in (cd.get("Signature",""),cd.get("TableId","").strip()) if x])
+            name_parts = []
+            for x in ("Signature","TableId"):
+                if not cd.get(x): continue
+                n = cd[x]
+                if 2/3!=0 and not isinstance(n,str):
+                    try: n = n.decode()
+                    except: continue
+                name_parts.append(n.replace("?"," ").strip())
+            name = " - ".join(name_parts)
             if any(x.get("Signature") == cd.get("Signature") and x.get("TableId") == cd.get("TableId") for x in cl_plist["ACPI"]["DropTables"]):
                 print(" -> \"{}\" already in Clover plist!".format(name or "Unknown Dropped Table"))
             else:
@@ -720,7 +744,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP ", "SsdtEC", 0x00001000)
         for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
             ssdt_name = "SSDT-PLUG"
             table = self.d.acpi_tables[table_name]
-            if not table.get("signature","").lower() in ("dsdt","ssdt"):
+            if not table.get("signature") in (b"DSDT",b"SSDT"):
                 continue # We're not checking data tables
             print(" Checking {}...".format(table_name))
             try: cpu_name = self.d.get_processor_paths(table=table)[0][0]
@@ -1035,7 +1059,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
             "Enabled":        drop.get("Enabled",True),
             "OemTableId":     self.get_data(drop.get("TableId",zero),pad_to=8),
             "TableLength":    drop.get("Length",0),
-            "TableSignature": self.get_data(drop.get("Signature","SSDT"),pad_to=4)
+            "TableSignature": self.get_data(drop.get("Signature",b"SSDT"),pad_to=4)
         }
 
     def get_clover_drop(self, drop):
@@ -1142,8 +1166,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         hpet_sta = False
         sta = None
         table = self.d.get_dsdt_or_only()
-        table_id  = table.get("id",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8))
-        signature = table.get("signature",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
+        table_id  = table.get("id_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8))
+        signature = table.get("signature_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
         if hpets:
             name = hpets[0][0]
             print(" - Located at {}".format(name))
@@ -1563,8 +1587,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
                 "Comment":"{} _STA to XSTA Rename".format(dev_name),
                 "Find":padl+sta_hex+padr,
                 "Replace":padl+xsta_hex+padr,
-                "TableId":table.get("id",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
-                "Signature":table.get("signature",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
+                "TableId":table.get("id_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
+                "Signature":table.get("signature_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
             })
         return {"valid":True,"has_var":has_var,"sta":sta,"patches":patches,"device":dev,"dev_name":dev_name,"dev_hid":dev_hid,"root":root,"sta_type":sta_type}
 
@@ -1652,8 +1676,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
                         "Comment":"{} _CRS to XCRS Rename".format(rtc_dict["dev_name"]),
                         "Find":padl+crs_hex+padr,
                         "Replace":padl+xcrs_hex+padr,
-                        "TableId":table.get("id",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
-                        "Signature":table.get("signature",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
+                        "TableId":table.get("id_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
+                        "Signature":table.get("signature_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
                     })
                     rtc_dict["patches"] = patches
                     rtc_dict["crs"] = True
@@ -1889,8 +1913,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
                     "Comment":"{} _STA to XSTA Rename".format(task["device"].split(".")[-1]),
                     "Find":padl+sta_hex+padr,
                     "Replace":padl+xsta_hex+padr,
-                    "TableId":table.get("id",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
-                    "Signature":table.get("signature",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
+                    "TableId":table.get("id_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
+                    "Signature":table.get("signature_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
                 })
             # Let's try to get the _ADR
             scope_adr = self.d.get_name_paths(task["device"]+"._ADR")
@@ -2173,8 +2197,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                 "Comment":"OSID to XSID rename - must come before _OSI to XOSI rename!",
                 "Find":"4F534944",
                 "Replace":"58534944",
-                "TableId":table.get("id",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
-                "Signature":table.get("signature",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
+                "TableId":table.get("id_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
+                "Signature":table.get("signature_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
             })
         else:
             print(" - Not found, no OSID to XSID rename needed")
@@ -2942,7 +2966,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         return
 
     def fix_dmar(self):
-        dmar = next((table for table in self.d.acpi_tables.values() if table.get("signature","").lower() == "dmar"),None)
+        dmar = next((table for table in self.d.acpi_tables.values() if table.get("signature") == b"DMAR"),None)
         if not dmar:
             d = None
             while True:
@@ -2971,6 +2995,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
                 d.load(out)
                 dmar = d.get_table_with_signature("DMAR")
                 if not dmar: continue
+                # Ensure headers are normalized if set to be
+                self._normalize_headers(dsdt=d)
                 break
         self.u.head("Patching DMAR")
         print("")
@@ -3037,7 +3063,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         drop = ({
             "Comment":"Drop DMAR Table",
             "Signature":"DMAR",
-            "TableId":dmar.get("id","00000000")
+            "TableId":dmar.get("id_use","00000000")
         },)
         self.make_plist(oc, "DMAR.aml", (), drops=drop)
         print("")
@@ -3234,6 +3260,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
         if self.d.iasl_legacy:
             lines.append("L. Use Legacy Compiler for macOS 10.6 and prior: {}".format("{}!! Enabled !!{}".format(self.yel,self.rst) if self.iasl_legacy else "Disabled"))
         lines.append("D. Select ACPI table or folder containing tables")
+        lines.append("H. Header Normalizing: {}".format("{}!! Enabled !!{}".format(self.yel,self.rst) if self.normalize_headers else "Disabled"))
+        if self.normalize_headers:
+            lines.append("   - Only needed on OpenCore with the NormalizeHeaders quirk")
         lines.append("R. {} Window Resizing".format("Enable" if not self.resize_window else "Disable"))
         lines.append("Q. Quit")
         lines.append("")
@@ -3286,6 +3315,10 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
         elif menu.lower() == "l" and self.d.iasl_legacy:
             self.iasl_legacy = not self.iasl_legacy
             self.save_settings()
+        elif menu.lower() == "h":
+            self.normalize_headers ^= True
+            self.save_settings()
+            self._normalize_headers()
         elif menu.lower() == "r":
             self.resize_window ^= True
             self.save_settings()
