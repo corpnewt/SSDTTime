@@ -16,6 +16,7 @@ class SSDT:
         self.red = "\u001b[41;1m"
         self.yel = "\u001b[43;1m"
         self.rst = "\u001b[0m"
+        self.copy_as_path = self.u.check_admin() if os.name=="nt" else False
         if 2/3==0:
             # ANSI escapes don't seem to work properly with python 2.x
             self.red = self.yel = self.rst = ""
@@ -247,13 +248,9 @@ class SSDT:
                         f.write(d) # Write the updated file
                     # Attempt to load again
                     loaded_table = self.d.load(trouble_path)[0]
-                    self._normalize_headers()
                     if loaded_table:
                         try:
                             table = loaded_table[list(loaded_table)[0]]
-                            for p in patches:
-                                for a,b in (("signature_use","Signature"),("id_use","TableId")):
-                                    if table.get(a): p[b] = table[a]
                         except:
                             pass
                         fixed = True
@@ -300,7 +297,6 @@ class SSDT:
             self.u.grab("Press [enter] to continue...")
         if temp:
             shutil.rmtree(temp,ignore_errors=True)
-        self._normalize_headers()
         return path
 
     def select_dsdt(self, single_table=False):
@@ -328,20 +324,6 @@ class SSDT:
             if not out: continue
             # Got a DSDT, try to load it
             return self.load_dsdt(out)
-
-    def _normalize_headers(self, dsdt=None):
-        dsdt = dsdt or self.d
-        for table in dsdt.acpi_tables.values():
-            for key in ("id","signature"):
-                if self.normalize_headers == 1:
-                    # Attempt to use the _ascii variants
-                    table[key+"_use"] = table.get(key+"_ascii",table[key])
-                elif self.normalize_headers == 2:
-                    # Set ids to all 0s as wild cards
-                    table[key+"_use"] = self.d.get_hex_bytes("00000000")
-                else:
-                    # Restore with the originals
-                    table[key+"_use"] = table[key]
 
     def _ensure_dsdt(self, allow_any=False):
         # Helper to check conditions for when we have valid tables
@@ -1029,6 +1011,23 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         else:
             return plistlib.Data(data+b"\x00"*(max(pad_to-len(data),0)))
 
+    def _get_table_id(self, table, id_name, normalize=None):
+        if normalize is None:
+            normalize = self.normalize_headers
+        if table is None:
+            # No table found - return 0s as a failsafe
+            normalize = 2
+        # 0 = original headers
+        # 1 = normalized headers with unprintable chars replaced by '?'
+        # 2 = all 0s - wildcard to match any value
+        zero = self.d.get_hex_bytes("00" * (8 if id_name == "id" else 4))
+        if normalize == 0:
+            return table.get(id_name,zero)
+        elif normalize == 1:
+            return table.get(id_name+"_ascii",table.get(id_name,zero))
+        else:
+            return zero
+
     def get_clover_patch(self, patch):
         return {
             "Comment":  patch["Comment"],
@@ -1038,40 +1037,53 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         }
 
     def get_oc_patch(self, patch):
-        zero = self.d.get_hex_bytes("00000000")
+        table = patch.get("Table",self.d.get_dsdt_or_only())
+        sig   = self._get_table_id(table,"signature")
+        t_id  = self._get_table_id(table,"id")
         return {
-            "Base":           "",
-            "BaseSkip":       0,
-            "Comment":        patch["Comment"],
-            "Count":          0,
+            "Base":           patch.get("Base",""),
+            "BaseSkip":       patch.get("BaseSkip",0),
+            "Comment":        patch.get("Comment",""),
+            "Count":          patch.get("Count",0),
             "Enabled":        patch.get("Enabled",True),
             "Find":           self.get_data(self.d.get_hex_bytes(patch["Find"])),
-            "Limit":          0,
-            "Mask":           self.get_data(b""),
-            "OemTableId":     self.get_data(patch.get("TableId",zero),pad_to=8),
+            "Limit":          patch.get("Limit",0),
+            "Mask":           self.get_data(patch.get("Mask",b"")),
+            "OemTableId":     self.get_data(t_id,pad_to=8),
             "Replace":        self.get_data(self.d.get_hex_bytes(patch["Replace"])),
-            "ReplaceMask":    self.get_data(b""),
-            "Skip":           0,
-            "TableLength":    0,
-            "TableSignature": self.get_data(patch.get("Signature",zero),pad_to=4)
+            "ReplaceMask":    self.get_data(patch.get("ReplaceMask",b"")),
+            "Skip":           patch.get("Skip",0),
+            "TableLength":    patch.get("Length",table.get("length",0) if table else 0),
+            "TableSignature": self.get_data(sig,pad_to=4)
         }
 
     def get_oc_drop(self, drop):
-        zero = self.d.get_hex_bytes("00000000")
+        table = drop.get("Table")
+        # Cannot accept None for a table to drop
+        table = table or self.d.get_dsdt_or_only()
+        sig   = self._get_table_id(table,"signature")
+        t_id  = self._get_table_id(table,"id")
         return {
             "All":            drop.get("All",False),
-            "Comment":        drop["Comment"],
+            "Comment":        drop.get("Comment",""),
             "Enabled":        drop.get("Enabled",True),
-            "OemTableId":     self.get_data(drop.get("TableId",zero),pad_to=8),
-            "TableLength":    drop.get("Length",0),
-            "TableSignature": self.get_data(drop.get("Signature",b"SSDT"),pad_to=4)
+            "OemTableId":     self.get_data(t_id,pad_to=8),
+            "TableLength":    drop.get("Length",table.get("length",0)),
+            "TableSignature": self.get_data(sig,pad_to=4)
         }
 
     def get_clover_drop(self, drop):
-        d = {}
-        for x in ("Signature","TableId","Length"):
-            if x in drop:
-                d[x] = drop[x]
+        table = drop.get("Table")
+        # Cannot accept None for a table to drop
+        table = table or self.d.get_dsdt_or_only()
+        d = {
+            # Strip null chars and then decode to strings
+            "Signature": table["signature"].rstrip(b"\x00").decode(),
+            "TableId":   table["id"].rstrip(b"\x00").decode(),
+        }
+        # Only add the length if we have a valid value for it
+        length = drop.get("Length",table.get("length"))
+        if length: d["Length"] = length
         return d
 
     def get_irq_choice(self, irqs):
@@ -1170,9 +1182,6 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         patches = []
         hpet_sta = False
         sta = None
-        table = self.d.get_dsdt_or_only()
-        table_id  = table.get("id_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8))
-        signature = table.get("signature_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
         if hpets:
             name = hpets[0][0]
             print(" - Located at {}".format(name))
@@ -1241,9 +1250,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
             patches.append({
                 "Comment":"{} _CRS to XCRS Rename".format(name.split(".")[-1].lstrip("\\")),
                 "Find":padl+crs+padr,
-                "Replace":padl+xcrs+padr,
-                "TableId":table_id,
-                "Signature":signature
+                "Replace":padl+xcrs+padr
             })
         else:
             print(" - None located!")
@@ -1323,9 +1330,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                     patches.append({
                         "Comment":patch_name,
                         "Find":p["find"],
-                        "Replace":p["repl"],
-                        "TableId":table_id,
-                        "Signature":signature
+                        "Replace":p["repl"]
                     })
                     print(" - {}".format(patch_name))
                     print("      Find: {}".format(p["find"]))
@@ -1347,10 +1352,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                     "Find":x["find"],
                     "Replace":x["repl"],
                     "Disabled":True,
-                    "Enabled":False,
-                    "TableId":table_id,
-                    "Signature":signature
-                })
+                    "Enabled":False                })
                 print(" - {}".format(patch_name))
                 print("      Find: {}".format(x["find"]))
                 print("   Replace: {}".format(x["repl"]))
@@ -1592,8 +1594,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
                 "Comment":"{} _STA to XSTA Rename".format(dev_name),
                 "Find":padl+sta_hex+padr,
                 "Replace":padl+xsta_hex+padr,
-                "TableId":table.get("id_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
-                "Signature":table.get("signature_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
+                "Table":table
             })
         return {"valid":True,"has_var":has_var,"sta":sta,"patches":patches,"device":dev,"dev_name":dev_name,"dev_hid":dev_hid,"root":root,"sta_type":sta_type}
 
@@ -1606,7 +1607,6 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         rtc_crs_type = None
         crs_lines = []
         lpc_name = None
-        table = self.d.get_dsdt_or_only()
         awac_dict = self.get_sta_var(var="STAS",dev_hid="ACPI000E",dev_name="AWAC")
         rtc_dict = self.get_sta_var(var="STAS",dev_hid="PNP0B00",dev_name="RTC")
         # At this point - we should have any info about our AWAC and RTC devices
@@ -1680,9 +1680,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
                     patches.append({
                         "Comment":"{} _CRS to XCRS Rename".format(rtc_dict["dev_name"]),
                         "Find":padl+crs_hex+padr,
-                        "Replace":padl+xcrs_hex+padr,
-                        "TableId":table.get("id_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
-                        "Signature":table.get("signature_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
+                        "Replace":padl+xcrs_hex+padr
                     })
                     rtc_dict["patches"] = patches
                     rtc_dict["crs"] = True
@@ -1871,7 +1869,6 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
         self.u.head("USB Reset")
         print("")
         print("Gathering RHUB/HUBN/URTH devices...")
-        table = self.d.get_dsdt_or_only()
         rhubs = self.d.get_device_paths("RHUB")
         rhubs.extend(self.d.get_device_paths("HUBN"))
         rhubs.extend(self.d.get_device_paths("URTH"))
@@ -1917,9 +1914,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
                 patches.append({
                     "Comment":"{} _STA to XSTA Rename".format(task["device"].split(".")[-1]),
                     "Find":padl+sta_hex+padr,
-                    "Replace":padl+xsta_hex+padr,
-                    "TableId":table.get("id_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
-                    "Signature":table.get("signature_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
+                    "Replace":padl+xsta_hex+padr
                 })
             # Let's try to get the _ADR
             scope_adr = self.d.get_name_paths(task["device"]+"._ADR")
@@ -2113,7 +2108,6 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
     def ssdt_xosi(self):
         if not self.ensure_dsdt():
             return
-        table = self.d.get_dsdt_or_only()
         # Let's see what, if any, the highest version contained in the DSDT is
         highest_osi = None
         for x in self.osi_strings:
@@ -2202,13 +2196,17 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                 "Comment":"OSID to XSID rename - must come before _OSI to XOSI rename!",
                 "Find":"4F534944",
                 "Replace":"58534944",
-                "TableId":table.get("id_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
-                "Signature":table.get("signature_use",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
+                "Table":None # Apply to all tables
             })
         else:
             print(" - Not found, no OSID to XSID rename needed")
         print("Creating _OSI to XOSI rename...")
-        patches.append({"Comment":"_OSI to XOSI rename - requires SSDT-XOSI.aml","Find":"5F4F5349","Replace":"584F5349"})
+        patches.append({
+            "Comment":"_OSI to XOSI rename - requires SSDT-XOSI.aml",
+            "Find":"5F4F5349",
+            "Replace":"584F5349",
+            "Table":None # Apply to all tables
+        })
         self.write_ssdt("SSDT-XOSI",ssdt)
         oc = {"Comment":"_OSI override to return true through {} - requires _OSI to XOSI rename".format(target_string),"Enabled":True,"Path":"SSDT-XOSI.aml"}
         self.make_plist(oc, "SSDT-XOSI.aml", patches, replace=True)
@@ -2772,7 +2770,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
                 patches.append({
                     "Comment":"PNLF to XNLF Rename",
                     "Find":"504E4C46",
-                    "Replace":"584E4C46"
+                    "Replace":"584E4C46",
+                    "Table":None # Apply to all tables
                 })
                 break
         # Checks for Name (NBCF, Zero) or Name (NBCF, 0x00)
@@ -2792,7 +2791,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
                     "Find":"084E4243460A00",
                     "Replace":"084E4243460A01",
                     "Enabled":False,
-                    "Disabled":True
+                    "Disabled":True,
+                    "Table":None # Apply to all tables
                 })
             if not has_nbcf_new and nbcf_new in table["raw"]:
                 print("Name (NBCF, Zero) detected in {} - generating patch...".format(table_name))
@@ -2803,7 +2803,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
                     "Find":"084E42434600",
                     "Replace":"084E42434601",
                     "Enabled":False,
-                    "Disabled":True
+                    "Disabled":True,
+                    "Table":None # Apply to all tables
                 })
             if has_nbcf_old and has_nbcf_new:
                 break # Nothing else to look for
@@ -3000,8 +3001,6 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
                 d.load(out)
                 dmar = d.get_table_with_signature("DMAR")
                 if not dmar: continue
-                # Ensure headers are normalized if set to be
-                self._normalize_headers(dsdt=d)
                 break
         self.u.head("Patching DMAR")
         print("")
@@ -3067,8 +3066,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         }
         drop = ({
             "Comment":"Drop DMAR Table",
-            "Signature":"DMAR",
-            "TableId":dmar.get("id_use","00000000")
+            "Table":dmar
         },)
         self.make_plist(oc, "DMAR.aml", (), drops=drop)
         print("")
@@ -3333,7 +3331,6 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
             if self.normalize_headers > 2:
                 self.normalize_headers = 0
             self.save_settings()
-            self._normalize_headers()
         elif menu.lower() == "r":
             self.resize_window ^= True
             self.save_settings()
