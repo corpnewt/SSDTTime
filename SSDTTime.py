@@ -107,7 +107,7 @@ class SSDT:
             if self.d.iasl_legacy: # Only load the legacy compiler setting if we can
                 self.iasl_legacy = settings.get("legacy_compiler",False)
             self.resize_window = settings.get("resize_window",True)
-            self.normalize_headers = settings.get("normalize_headers",False)
+            self.normalize_headers = settings.get("normalize_headers",0)
         except: return
 
     def get_unique_name(self,name,target_folder,name_append="-Patched"):
@@ -3272,7 +3272,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
                 0:"Disabled (Use Table Sig + OemTableId)",
                 1:"Enabled (Use Table Sig + OemTableId)",
                 2:"Disabled (Match Any Table Sig + OemTableId)"    
-            }.get(self.normalize_headers,"Disabled (Use Table Ids)")
+            }.get(self.normalize_headers,"Disabled (Use Table Sig + OemTableId)")
         ))
         if self.normalize_headers == 0:
             lines.append("   {}!! NOTE !!{} Enable for OpenCore with the NormalizeHeaders quirk".format(self.yel,self.rst))
