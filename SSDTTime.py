@@ -32,7 +32,7 @@ class SSDT:
         # 0 = Use table ids, don't normalize
         # 1 = Use table ids, normalize '?'
         # 2 = Use 0 wildcards for table ids
-        self.normalize_headers = 0
+        self.normalize_headers = 2
         self.dsdt = None
         self.settings = os.path.join(os.path.dirname(os.path.realpath(__file__)),"Scripts","settings.json")
         if os.path.exists(self.settings):
@@ -107,7 +107,7 @@ class SSDT:
             if self.d.iasl_legacy: # Only load the legacy compiler setting if we can
                 self.iasl_legacy = settings.get("legacy_compiler",False)
             self.resize_window = settings.get("resize_window",True)
-            self.normalize_headers = settings.get("normalize_headers",0)
+            self.normalize_headers = settings.get("normalize_headers",2)
         except: return
 
     def get_unique_name(self,name,target_folder,name_append="-Patched"):
@@ -3269,10 +3269,10 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
         lines.append("D. Select ACPI table or folder containing tables")
         lines.append("H. Header Normalizing: {}".format(
             {
-                0:"Disabled (Use Table Sig + OemTableId)",
-                1:"Enabled (Use Table Sig + OemTableId)",
-                2:"Disabled (Match Any Table Sig + OemTableId)"    
-            }.get(self.normalize_headers,"Disabled (Use Table Sig + OemTableId)")
+                0:"Disabled (Use Table Ids)",
+                1:"Enabled (Use Table Ids)",
+                2:"Disabled (Match Any Table Ids)"    
+            }.get(self.normalize_headers,"Disabled (Use Table Ids)")
         ))
         if self.normalize_headers == 0:
             lines.append("   {}!! NOTE !!{} Enable for OpenCore with the NormalizeHeaders quirk".format(self.yel,self.rst))
