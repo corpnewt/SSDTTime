@@ -16,11 +16,12 @@ class SSDT:
         self.red = "\u001b[41;1m"
         self.yel = "\u001b[43;1m"
         self.grn = "\u001b[42;1m"
+        self.blu = "\u001b[46;1m"
         self.rst = "\u001b[0m"
         self.copy_as_path = self.u.check_admin() if os.name=="nt" else False
         if 2/3==0:
             # ANSI escapes don't seem to work properly with python 2.x
-            self.red = self.yel = self.grn = self.rst = ""
+            self.red = self.yel = self.grn = self.blu = self.rst = ""
         if os.name == "nt":
             if 2/3!=0:
                 os.system("color") # Allow ASNI color escapes.
@@ -3246,15 +3247,20 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
         while True:
             self.u.head("Select OpenCore Match Mode")
             print("")
-            print("1. {}Least Strict{}".format(self.red,self.rst))
-            print("   - Match any table id and any table length")
+            print("1. {}Least Strict{}:".format(self.red,self.rst))
+            print("   - Signature/Table ID Matching: {} ANY {}".format(self.red,self.rst))
+            print("   -       Table Length Matching: {} ANY {}".format(self.red,self.rst))
             print("2. {}Length Only{}:".format(self.yel,self.rst))
-            print("   - Match any table id, but ensure table length matches")
+            print("   - Signature/Table ID Matching: {} ANY {}".format(self.red,self.rst))
+            print("   -       Table Length Matching: {}STRICT{}".format(self.grn,self.rst))
             print("3. {}Table Ids and Length{}:".format(self.grn,self.rst))
-            print("   - Match table id/signature and ensure table length matches")
-            print("4. {}Table Ids and Length (NormalizedHeaders){}:".format(self.grn,self.rst))
-            print("   - Match normalized table id/signature and ensure table length matches")
-            print("   - {}!! Only needed with the NormalizeHeaders quirk enabled !!{}".format(self.red,self.rst))
+            print("   !! Requires NormalizeHeaders quirk is {}DISABLED{} in config.plist !!".format(self.red,self.rst))
+            print("   - Signature/Table ID Matching: {}STRICT{}".format(self.grn,self.rst))
+            print("   -       Table Length Matching: {}STRICT{}".format(self.grn,self.rst))
+            print("4. {}Table Ids and Length (NormalizeHeaders){}:".format(self.blu,self.rst))
+            print("   !! Requires NormalizeHeaders quirk is {}ENABLED{} in config.plist !!".format(self.grn,self.rst))
+            print("   - Signature/Table ID Matching: {}STRICT{}".format(self.grn,self.rst))
+            print("   -       Table Length Matching: {}STRICT{}".format(self.grn,self.rst))
             print("")
             print("M. Return to Menu")
             print("Q. Quit")
@@ -3313,7 +3319,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
                 0:"{}Least Strict{}".format(self.red,self.rst),
                 1:"{}Length Only{}".format(self.yel,self.rst),
                 2:"{}Table Ids and Length{}".format(self.grn,self.rst),
-                3:"{}Table Ids and Length (NormalizedHeaders){}".format(self.grn,self.rst)
+                3:"{}Table Ids and Length (NormalizeHeaders){}".format(self.blu,self.rst)
             }.get(self.match_mode,"{}Unknown{}".format(self.red,self.rst))
         ))
         lines.append("R. {} Window Resizing".format("Enable" if not self.resize_window else "Disable"))
