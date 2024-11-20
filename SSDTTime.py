@@ -28,7 +28,7 @@ class SSDT:
             self.h = 30
         self.iasl_legacy = False
         self.resize_window = True
-        # Set up normalize headers approach:
+        # Set up match mode approach:
         # 0 = Any table id, any length
         # 1 = Any table id, match length
         # 2 = Match table id, match length
@@ -3254,7 +3254,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
             print("   - Match table id/signature and ensure table length matches")
             print("4. {}Table Ids and Length (NormalizedHeaders){}:".format(self.grn,self.rst))
             print("   - Match normalized table id/signature and ensure table length matches")
-            print("   - {}!! Only needed with the NormalizeHeaders quirk !!{}".format(self.red,self.rst))
+            print("   - {}!! Only needed with the NormalizeHeaders quirk enabled !!{}".format(self.red,self.rst))
             print("")
             print("M. Return to Menu")
             print("Q. Quit")
