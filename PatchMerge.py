@@ -1,5 +1,5 @@
-from Scripts import *
-import getpass, os, tempfile, shutil, plistlib, sys, binascii, zipfile, re, string
+from Scripts import utils, plist
+import os
 
 class PatchMerge:
     def __init__(self):
@@ -15,6 +15,44 @@ class PatchMerge:
         self.clover_path = os.path.join(self.output,"patches_Clover.plist")
         self.config_path = None
         self.config_type = None
+
+    def get_ascii_print(self, data):
+        # Helper to sanitize unprintable characters by replacing them with
+        # ? where needed
+        unprintables = False
+        all_zeroes = True
+        ascii_string = ""
+        for b in data:
+            if not isinstance(b,int):
+                try: b = ord(b)
+                except: pass
+            if b != 0:
+                # Not wildcard matching
+                all_zeroes = False
+            if ord(" ") <= b < ord("~"):
+                ascii_string += chr(b)
+            else:
+                ascii_string += "?"
+                unprintables = True
+        return (False if all_zeroes else unprintables,ascii_string)
+
+    def check_normalize(self, patch_or_drop, normalize_headers, check_type="Patch"):
+        if normalize_headers:
+            # OpenCore - and NormalizeHeaders is enabled.  Check if we have
+            # any unprintable ASCII chars in our OemTableId or TableSignature
+            # and warn.
+            if any(self.get_ascii_print(patch_or_drop.get(x,b"\x00"))[0] for x in ("OemTableId","TableSignature")):
+                print("\n !! NormalizeHeaders is ENABLED, and table ids contain unprintable characters !!")
+                print(" !! {} may not match or apply !!\n".format(check_type))
+                return True
+        else:
+            # Not enabled - check for question marks as that may imply characters
+            # were sanitized when creating the patches/dropping tables.
+            if any("?" in self.get_ascii_print(patch_or_drop.get(x,b"\x00"))[1] for x in ("OemTableId","TableSignature")):
+                print("\n !! NormalizeHeaders is DISABLED, and table ids contain '?' !!")
+                print(" !! {} may not match or apply !!\n".format(check_type))
+                return True
+        return False
 
     def ensure_path(self, plist_data, path_list, final_type = list):
         if not path_list: return plist_data
@@ -42,6 +80,7 @@ class PatchMerge:
         # Recheck the config.plist type
         self.config_type = "OpenCore" if "PlatformInfo" in config_data else "Clover" if "SMBIOS" in config_data else None
         target_path = self.oc_path if self.config_type == "OpenCore" else self.clover_path if self.config_type == "Clover" else None
+        errors_found = normalize_headers = False # Default to off
         if not target_path:
             print("Could not determine plist type!")
             print("")
@@ -63,6 +102,13 @@ class PatchMerge:
             config_data = self.ensure_path(config_data,("ACPI","Delete"))
             print(" - ACPI -> Patch...")
             config_data = self.ensure_path(config_data,("ACPI","Patch"))
+            print(" - ACPI -> Quirks...")
+            config_data = self.ensure_path(config_data,("ACPI","Quirks"),final_type=dict)
+            normalize_headers = config_data["ACPI"]["Quirks"].get("NormalizeHeaders",False)
+            if not isinstance(normalize_headers,(bool)):
+                errors_found = True
+                print("\n !! ACPI -> Quirks -> NormalizeHeaders is malformed - assuming False !!")
+                normalize_headers = False
         else:
             print(" - ACPI -> DropTables")
             config_data = self.ensure_path(config_data,("ACPI","DropTables"))
@@ -103,6 +149,7 @@ class PatchMerge:
             print(" - Adding {:,} SSDT{}...".format(len(ssdts),"" if len(ssdts)==1 else "s"))
             s_orig.extend(ssdts)
             if s_broken:
+                errors_found = True
                 print("\n !! {:,} Malformed entr{} found - please fix your {} !!".format(
                     len(s_broken),
                     "y" if len(s_broken)==1 else "ies",
@@ -118,6 +165,8 @@ class PatchMerge:
             p_broken = [x for x in p_orig if not isinstance(x,dict)]
             for p in patch:
                 print(" - Checking {}...".format(p["Comment"]))
+                if self.config_type == "OpenCore" and self.check_normalize(p,normalize_headers):
+                    errors_found = True
                 existing = [x for x in p_orig if isinstance(x,dict) and x["Find"] == p["Find"] and x["Replace"] == p["Replace"]]
                 if existing:
                     print(" --> Located {:,} existing to replace...".format(len(existing)))
@@ -132,6 +181,7 @@ class PatchMerge:
             print(" - Adding {:,} patch{}...".format(len(patch),"" if len(patch)==1 else "es"))
             p_orig.extend(patch)
             if p_broken:
+                errors_found = True
                 print("\n !! {:,} Malformed entr{} found - please fix your {} !!".format(
                     len(p_broken),
                     "y" if len(p_broken)==1 else "ies",
@@ -148,6 +198,8 @@ class PatchMerge:
             for d in drops:
                 if self.config_type == "OpenCore":
                     print(" - Checking {}...".format(d["Comment"]))
+                    if self.check_normalize(d,normalize_headers,check_type="Dropped table"):
+                        errors_found = True
                     existing = [x for x in d_orig if isinstance(x,dict) and x["TableSignature"] == d["TableSignature"] and x["OemTableId"] == d["OemTableId"]]
                 else:
                     name = " - ".join([x for x in (d.get("Signature",""),d.get("TableId","")) if x]) or "Unknown Dropped Table"
@@ -165,6 +217,7 @@ class PatchMerge:
             print(" - Dropping {:,} table{}...".format(len(drops),"" if len(drops)==1 else "s"))
             d_orig.extend(drops)
             if d_broken:
+                errors_found = True
                 print("\n !! {:,} Malformed entr{} found - please fix your {} !!".format(
                     len(d_broken),
                     "y" if len(d_broken)==1 else "ies",
@@ -185,6 +238,8 @@ class PatchMerge:
             return
         print(" - Saved.")
         print("")
+        if errors_found:
+            print("!! Potential errors were found when merging - please address them !!")
         print("!! Make sure you review the saved {} before replacing !!".format(os.path.basename(self.config_path)))
         print("")
         print("Done.")
