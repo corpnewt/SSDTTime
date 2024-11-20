@@ -48,7 +48,7 @@ class PatchMerge:
         else:
             # Not enabled - check for question marks as that may imply characters
             # were sanitized when creating the patches/dropping tables.
-            if any("?" in self.get_ascii_print(patch_or_drop.get(x,b"\x00"))[1] for x in ("OemTableId","TableSignature")):
+            if any(b"\x3F" in patch_or_drop.get(x,b"\x00") for x in ("OemTableId","TableSignature")):
                 print("\n !! NormalizeHeaders is DISABLED, and table ids contain '?' !!")
                 print(" !! {} may not match or apply !!\n".format(check_type))
                 return True
