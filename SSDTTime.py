@@ -15,19 +15,26 @@ class SSDT:
         self.h = 24
         self.red = "\u001b[41;1m"
         self.yel = "\u001b[43;1m"
+        self.grn = "\u001b[42;1m"
+        self.blu = "\u001b[46;1m"
         self.rst = "\u001b[0m"
         self.copy_as_path = self.u.check_admin() if os.name=="nt" else False
+        if 2/3==0:
+            # ANSI escapes don't seem to work properly with python 2.x
+            self.red = self.yel = self.grn = self.blu = self.rst = ""
         if os.name == "nt":
-            if 2/3==0:
-                # ANSI escapes don't seem to work properly in Windows
-                # with python 2.x - clear them out
-                self.red = self.yel = self.rst = ""
-            else:
+            if 2/3!=0:
                 os.system("color") # Allow ASNI color escapes.
             self.w = 120
             self.h = 30
         self.iasl_legacy = False
         self.resize_window = True
+        # Set up match mode approach:
+        # 0 = Any table id, any length
+        # 1 = Any table id, match length
+        # 2 = Match table id, match length
+        # 3 = Match NORMALIZED table id, match length
+        self.match_mode = 0
         self.dsdt = None
         self.settings = os.path.join(os.path.dirname(os.path.realpath(__file__)),"Scripts","settings.json")
         if os.path.exists(self.settings):
@@ -90,7 +97,8 @@ class SSDT:
     def save_settings(self):
         settings = {
             "legacy_compiler": self.iasl_legacy,
-            "resize_window": self.resize_window
+            "resize_window": self.resize_window,
+            "match_mode": self.match_mode
         }
         try: json.dump(settings,open(self.settings,"w"),indent=2)
         except: return
@@ -101,6 +109,7 @@ class SSDT:
             if self.d.iasl_legacy: # Only load the legacy compiler setting if we can
                 self.iasl_legacy = settings.get("legacy_compiler",False)
             self.resize_window = settings.get("resize_window",True)
+            self.match_mode = settings.get("match_mode",0)
         except: return
 
     def get_unique_name(self,name,target_folder,name_append="-Patched"):
@@ -160,7 +169,7 @@ class SSDT:
             # We got at least one file - let's look for the DSDT specifically
             # and try to load that as-is.  If it doesn't load, we'll have to
             # manage everything with temp folders
-            dsdt_list = [x for x in tables if self.d._table_signature(path,x) == "DSDT"]
+            dsdt_list = [x for x in tables if self.d._table_signature(path,x) == b"DSDT"]
             if len(dsdt_list) > 1:
                 print("Multiple files with DSDT signature passed:")
                 for d in self.sorted_nicely(dsdt_list):
@@ -187,7 +196,7 @@ class SSDT:
                 # If it loads fine - just return the path
                 # to the parent directory
                 return os.path.dirname(path)
-            if not self.d._table_signature(path) == "DSDT":
+            if not self.d._table_signature(path) == b"DSDT":
                 # Not a DSDT, we aren't applying pre-patches
                 print("\n{} could not be disassembled!".format(os.path.basename(path)))
                 print("")
@@ -245,9 +254,6 @@ class SSDT:
                     if loaded_table:
                         try:
                             table = loaded_table[list(loaded_table)[0]]
-                            for p in patches:
-                                for a,b in (("signature","Signature"),("id","TableId")):
-                                    if table.get(a): p[b] = table[a]
                         except:
                             pass
                         fixed = True
@@ -440,7 +446,15 @@ class SSDT:
             else:
                 print(" -> Adding \"{}\" to OC plist!".format(d["Comment"]))
                 oc_plist["ACPI"]["Delete"].append(ocd)
-            name = " - ".join([x for x in (cd.get("Signature",""),cd.get("TableId","").strip()) if x])
+            name_parts = []
+            for x in ("Signature","TableId"):
+                if not cd.get(x): continue
+                n = cd[x]
+                if 2/3!=0 and not isinstance(n,str):
+                    try: n = n.decode()
+                    except: continue
+                name_parts.append(n.replace("?"," ").strip())
+            name = " - ".join(name_parts)
             if any(x.get("Signature") == cd.get("Signature") and x.get("TableId") == cd.get("TableId") for x in cl_plist["ACPI"]["DropTables"]):
                 print(" -> \"{}\" already in Clover plist!".format(name or "Unknown Dropped Table"))
             else:
@@ -720,7 +734,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP ", "SsdtEC", 0x00001000)
         for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
             ssdt_name = "SSDT-PLUG"
             table = self.d.acpi_tables[table_name]
-            if not table.get("signature","").lower() in ("dsdt","ssdt"):
+            if not table.get("signature") in (b"DSDT",b"SSDT"):
                 continue # We're not checking data tables
             print(" Checking {}...".format(table_name))
             try: cpu_name = self.d.get_processor_paths(table=table)[0][0]
@@ -1000,6 +1014,35 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         else:
             return plistlib.Data(data+b"\x00"*(max(pad_to-len(data),0)))
 
+    def _get_table_id(self, table, id_name, mode=None):
+        if mode is None:
+            mode = self.match_mode
+        if table is None:
+            # No table found - return 0s as a failsafe
+            mode = 0
+        # 0 = Any table id, any length
+        # 1 = Any table id, match length
+        # 2 = Match table id, match length
+        # 3 = Match NORMALIZED table id, match length
+        zero = self.d.get_hex_bytes("00" * (8 if id_name == "id" else 4))
+        if mode in (0,1):
+            return zero
+        elif mode == 2:
+            return table.get(id_name,zero)
+        else:
+            return table.get(id_name+"_ascii",table.get(id_name,zero))
+
+    def _get_table_length(self, table, mode=None):
+        if mode is None:
+            mode = self.match_mode
+        if table is None or mode == 0:
+            # No table found, or we're zeroing the
+            # length - just return 0
+            return 0
+        # If mode is not 0, we return the table
+        # length
+        return table.get("length",0)
+
     def get_clover_patch(self, patch):
         return {
             "Comment":  patch["Comment"],
@@ -1009,40 +1052,56 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         }
 
     def get_oc_patch(self, patch):
-        zero = self.d.get_hex_bytes("00000000")
+        table = patch.get("Table",self.d.get_dsdt_or_only())
+        sig   = self._get_table_id(table,"signature")
+        t_id  = self._get_table_id(table,"id")
+        leng  = self._get_table_length(table)
         return {
-            "Base":           "",
-            "BaseSkip":       0,
-            "Comment":        patch["Comment"],
-            "Count":          0,
+            "Base":           patch.get("Base",""),
+            "BaseSkip":       patch.get("BaseSkip",0),
+            "Comment":        patch.get("Comment",""),
+            "Count":          patch.get("Count",0),
             "Enabled":        patch.get("Enabled",True),
             "Find":           self.get_data(self.d.get_hex_bytes(patch["Find"])),
-            "Limit":          0,
-            "Mask":           self.get_data(b""),
-            "OemTableId":     self.get_data(patch.get("TableId",zero),pad_to=8),
+            "Limit":          patch.get("Limit",0),
+            "Mask":           self.get_data(patch.get("Mask",b"")),
+            "OemTableId":     self.get_data(t_id,pad_to=8),
             "Replace":        self.get_data(self.d.get_hex_bytes(patch["Replace"])),
-            "ReplaceMask":    self.get_data(b""),
-            "Skip":           0,
-            "TableLength":    0,
-            "TableSignature": self.get_data(patch.get("Signature",zero),pad_to=4)
+            "ReplaceMask":    self.get_data(patch.get("ReplaceMask",b"")),
+            "Skip":           patch.get("Skip",0),
+            "TableLength":    patch.get("Length",leng),
+            "TableSignature": self.get_data(sig,pad_to=4)
         }
 
     def get_oc_drop(self, drop):
-        zero = self.d.get_hex_bytes("00000000")
+        table = drop.get("Table")
+        # Cannot accept None for a table to drop
+        table = table or self.d.get_dsdt_or_only()
+        sig   = self._get_table_id(table,"signature")
+        t_id  = self._get_table_id(table,"id")
+        leng  = self._get_table_length(table)
         return {
             "All":            drop.get("All",False),
-            "Comment":        drop["Comment"],
+            "Comment":        drop.get("Comment",""),
             "Enabled":        drop.get("Enabled",True),
-            "OemTableId":     self.get_data(drop.get("TableId",zero),pad_to=8),
-            "TableLength":    drop.get("Length",0),
-            "TableSignature": self.get_data(drop.get("Signature","SSDT"),pad_to=4)
+            "OemTableId":     self.get_data(t_id,pad_to=8),
+            "TableLength":    drop.get("Length",leng),
+            "TableSignature": self.get_data(sig,pad_to=4)
         }
 
     def get_clover_drop(self, drop):
-        d = {}
-        for x in ("Signature","TableId","Length"):
-            if x in drop:
-                d[x] = drop[x]
+        table = drop.get("Table")
+        # Cannot accept None for a table to drop
+        table = table or self.d.get_dsdt_or_only()
+        leng  = self._get_table_length(table)
+        d = {
+            # Strip null chars and then decode to strings
+            "Signature": table["signature"].rstrip(b"\x00").decode(),
+            "TableId":   table["id"].rstrip(b"\x00").decode(),
+        }
+        # Only add the length if we have a valid value for it
+        length = drop.get("Length",leng)
+        if length: d["Length"] = length
         return d
 
     def get_irq_choice(self, irqs):
@@ -1141,9 +1200,6 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         patches = []
         hpet_sta = False
         sta = None
-        table = self.d.get_dsdt_or_only()
-        table_id  = table.get("id",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8))
-        signature = table.get("signature",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
         if hpets:
             name = hpets[0][0]
             print(" - Located at {}".format(name))
@@ -1212,9 +1268,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
             patches.append({
                 "Comment":"{} _CRS to XCRS Rename".format(name.split(".")[-1].lstrip("\\")),
                 "Find":padl+crs+padr,
-                "Replace":padl+xcrs+padr,
-                "TableId":table_id,
-                "Signature":signature
+                "Replace":padl+xcrs+padr
             })
         else:
             print(" - None located!")
@@ -1294,9 +1348,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                     patches.append({
                         "Comment":patch_name,
                         "Find":p["find"],
-                        "Replace":p["repl"],
-                        "TableId":table_id,
-                        "Signature":signature
+                        "Replace":p["repl"]
                     })
                     print(" - {}".format(patch_name))
                     print("      Find: {}".format(p["find"]))
@@ -1318,10 +1370,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
                     "Find":x["find"],
                     "Replace":x["repl"],
                     "Disabled":True,
-                    "Enabled":False,
-                    "TableId":table_id,
-                    "Signature":signature
-                })
+                    "Enabled":False                })
                 print(" - {}".format(patch_name))
                 print("      Find: {}".format(x["find"]))
                 print("   Replace: {}".format(x["repl"]))
@@ -1563,8 +1612,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
                 "Comment":"{} _STA to XSTA Rename".format(dev_name),
                 "Find":padl+sta_hex+padr,
                 "Replace":padl+xsta_hex+padr,
-                "TableId":table.get("id",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
-                "Signature":table.get("signature",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
+                "Table":table
             })
         return {"valid":True,"has_var":has_var,"sta":sta,"patches":patches,"device":dev,"dev_name":dev_name,"dev_hid":dev_hid,"root":root,"sta_type":sta_type}
 
@@ -1577,7 +1625,6 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
         rtc_crs_type = None
         crs_lines = []
         lpc_name = None
-        table = self.d.get_dsdt_or_only()
         awac_dict = self.get_sta_var(var="STAS",dev_hid="ACPI000E",dev_name="AWAC")
         rtc_dict = self.get_sta_var(var="STAS",dev_hid="PNP0B00",dev_name="RTC")
         # At this point - we should have any info about our AWAC and RTC devices
@@ -1651,9 +1698,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
                     patches.append({
                         "Comment":"{} _CRS to XCRS Rename".format(rtc_dict["dev_name"]),
                         "Find":padl+crs_hex+padr,
-                        "Replace":padl+xcrs_hex+padr,
-                        "TableId":table.get("id",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
-                        "Signature":table.get("signature",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
+                        "Replace":padl+xcrs_hex+padr
                     })
                     rtc_dict["patches"] = patches
                     rtc_dict["crs"] = True
@@ -1842,7 +1887,6 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
         self.u.head("USB Reset")
         print("")
         print("Gathering RHUB/HUBN/URTH devices...")
-        table = self.d.get_dsdt_or_only()
         rhubs = self.d.get_device_paths("RHUB")
         rhubs.extend(self.d.get_device_paths("HUBN"))
         rhubs.extend(self.d.get_device_paths("URTH"))
@@ -1888,9 +1932,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
                 patches.append({
                     "Comment":"{} _STA to XSTA Rename".format(task["device"].split(".")[-1]),
                     "Find":padl+sta_hex+padr,
-                    "Replace":padl+xsta_hex+padr,
-                    "TableId":table.get("id",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
-                    "Signature":table.get("signature",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
+                    "Replace":padl+xsta_hex+padr
                 })
             # Let's try to get the _ADR
             scope_adr = self.d.get_name_paths(task["device"]+"._ADR")
@@ -2084,7 +2126,6 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
     def ssdt_xosi(self):
         if not self.ensure_dsdt():
             return
-        table = self.d.get_dsdt_or_only()
         # Let's see what, if any, the highest version contained in the DSDT is
         highest_osi = None
         for x in self.osi_strings:
@@ -2173,13 +2214,17 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                 "Comment":"OSID to XSID rename - must come before _OSI to XOSI rename!",
                 "Find":"4F534944",
                 "Replace":"58534944",
-                "TableId":table.get("id",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=8)),
-                "Signature":table.get("signature",self.get_data(self.d.get_hex_bytes("00000000"),pad_to=4))
+                "Table":None # Apply to all tables
             })
         else:
             print(" - Not found, no OSID to XSID rename needed")
         print("Creating _OSI to XOSI rename...")
-        patches.append({"Comment":"_OSI to XOSI rename - requires SSDT-XOSI.aml","Find":"5F4F5349","Replace":"584F5349"})
+        patches.append({
+            "Comment":"_OSI to XOSI rename - requires SSDT-XOSI.aml",
+            "Find":"5F4F5349",
+            "Replace":"584F5349",
+            "Table":None # Apply to all tables
+        })
         self.write_ssdt("SSDT-XOSI",ssdt)
         oc = {"Comment":"_OSI override to return true through {} - requires _OSI to XOSI rename".format(target_string),"Enabled":True,"Path":"SSDT-XOSI.aml"}
         self.make_plist(oc, "SSDT-XOSI.aml", patches, replace=True)
@@ -2743,7 +2788,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
                 patches.append({
                     "Comment":"PNLF to XNLF Rename",
                     "Find":"504E4C46",
-                    "Replace":"584E4C46"
+                    "Replace":"584E4C46",
+                    "Table":None # Apply to all tables
                 })
                 break
         # Checks for Name (NBCF, Zero) or Name (NBCF, 0x00)
@@ -2763,7 +2809,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
                     "Find":"084E4243460A00",
                     "Replace":"084E4243460A01",
                     "Enabled":False,
-                    "Disabled":True
+                    "Disabled":True,
+                    "Table":None # Apply to all tables
                 })
             if not has_nbcf_new and nbcf_new in table["raw"]:
                 print("Name (NBCF, Zero) detected in {} - generating patch...".format(table_name))
@@ -2774,7 +2821,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
                     "Find":"084E42434600",
                     "Replace":"084E42434601",
                     "Enabled":False,
-                    "Disabled":True
+                    "Disabled":True,
+                    "Table":None # Apply to all tables
                 })
             if has_nbcf_old and has_nbcf_new:
                 break # Nothing else to look for
@@ -2942,7 +2990,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         return
 
     def fix_dmar(self):
-        dmar = next((table for table in self.d.acpi_tables.values() if table.get("signature","").lower() == "dmar"),None)
+        dmar = next((table for table in self.d.acpi_tables.values() if table.get("signature") == b"DMAR"),None)
         if not dmar:
             d = None
             while True:
@@ -3036,8 +3084,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         }
         drop = ({
             "Comment":"Drop DMAR Table",
-            "Signature":"DMAR",
-            "TableId":dmar.get("id","00000000")
+            "Table":dmar
         },)
         self.make_plist(oc, "DMAR.aml", (), drops=drop)
         print("")
@@ -3196,6 +3243,39 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
         self.u.grab("Press [enter] to return...")
         return
 
+    def pick_match_mode(self):
+        while True:
+            self.u.head("Select OpenCore Match Mode")
+            print("")
+            print("1. {}Least Strict{}:".format(self.red,self.rst))
+            print("   - Signature/Table ID Matching: {} ANY {}".format(self.red,self.rst))
+            print("   -       Table Length Matching: {} ANY {}".format(self.red,self.rst))
+            print("2. {}Length Only{}:".format(self.yel,self.rst))
+            print("   - Signature/Table ID Matching: {} ANY {}".format(self.red,self.rst))
+            print("   -       Table Length Matching: {}STRICT{}".format(self.grn,self.rst))
+            print("3. {}Table Ids and Length{}:".format(self.grn,self.rst))
+            print("   !! Requires NormalizeHeaders quirk is {}DISABLED{} in config.plist !!".format(self.red,self.rst))
+            print("   - Signature/Table ID Matching: {}STRICT{}".format(self.grn,self.rst))
+            print("   -       Table Length Matching: {}STRICT{}".format(self.grn,self.rst))
+            print("4. {}Table Ids and Length (NormalizeHeaders){}:".format(self.blu,self.rst))
+            print("   !! Requires NormalizeHeaders quirk is {}ENABLED{} in config.plist !!".format(self.grn,self.rst))
+            print("   - Signature/Table ID Matching: {}STRICT{}".format(self.grn,self.rst))
+            print("   -       Table Length Matching: {}STRICT{}".format(self.grn,self.rst))
+            print("")
+            print("M. Return to Menu")
+            print("Q. Quit")
+            print("")
+            menu = self.u.grab("Please select an option:  ")
+            if not len(menu):
+                continue
+            elif menu.lower() == "m":
+                return
+            elif menu.lower() == "q":
+                self.u.custom_quit()
+            elif menu in ("1","2","3","4"):
+                self.match_mode = int(menu)-1
+                return
+
     def main(self):
         cwd = os.getcwd()
         lines=[""]
@@ -3234,6 +3314,14 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
         if self.d.iasl_legacy:
             lines.append("L. Use Legacy Compiler for macOS 10.6 and prior: {}".format("{}!! Enabled !!{}".format(self.yel,self.rst) if self.iasl_legacy else "Disabled"))
         lines.append("D. Select ACPI table or folder containing tables")
+        lines.append("M. OpenCore Match Mode: {}".format(
+            {
+                0:"{}Least Strict{}".format(self.red,self.rst),
+                1:"{}Length Only{}".format(self.yel,self.rst),
+                2:"{}Table Ids and Length{}".format(self.grn,self.rst),
+                3:"{}Table Ids and Length (NormalizeHeaders){}".format(self.blu,self.rst)
+            }.get(self.match_mode,"{}Unknown{}".format(self.red,self.rst))
+        ))
         lines.append("R. {} Window Resizing".format("Enable" if not self.resize_window else "Disable"))
         lines.append("Q. Quit")
         lines.append("")
@@ -3285,6 +3373,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
             )
         elif menu.lower() == "l" and self.d.iasl_legacy:
             self.iasl_legacy = not self.iasl_legacy
+            self.save_settings()
+        elif menu.lower() == "m":
+            self.pick_match_mode()
             self.save_settings()
         elif menu.lower() == "r":
             self.resize_window ^= True
