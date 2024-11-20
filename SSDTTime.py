@@ -15,11 +15,12 @@ class SSDT:
         self.h = 24
         self.red = "\u001b[41;1m"
         self.yel = "\u001b[43;1m"
+        self.grn = "\u001b[42;1m"
         self.rst = "\u001b[0m"
         self.copy_as_path = self.u.check_admin() if os.name=="nt" else False
         if 2/3==0:
             # ANSI escapes don't seem to work properly with python 2.x
-            self.red = self.yel = self.rst = ""
+            self.red = self.yel = self.grn = self.rst = ""
         if os.name == "nt":
             if 2/3!=0:
                 os.system("color") # Allow ASNI color escapes.
@@ -28,10 +29,11 @@ class SSDT:
         self.iasl_legacy = False
         self.resize_window = True
         # Set up normalize headers approach:
-        # 0 = Use table ids, don't normalize
-        # 1 = Use table ids, normalize '?'
-        # 2 = Use 0 wildcards for table ids
-        self.normalize_headers = 2
+        # 0 = Any table id, any length
+        # 1 = Any table id, match length
+        # 2 = Match table id, match length
+        # 3 = Match NORMALIZED table id, match length
+        self.match_mode = 0
         self.dsdt = None
         self.settings = os.path.join(os.path.dirname(os.path.realpath(__file__)),"Scripts","settings.json")
         if os.path.exists(self.settings):
@@ -95,7 +97,7 @@ class SSDT:
         settings = {
             "legacy_compiler": self.iasl_legacy,
             "resize_window": self.resize_window,
-            "normalize_headers": self.normalize_headers
+            "match_mode": self.match_mode
         }
         try: json.dump(settings,open(self.settings,"w"),indent=2)
         except: return
@@ -106,7 +108,7 @@ class SSDT:
             if self.d.iasl_legacy: # Only load the legacy compiler setting if we can
                 self.iasl_legacy = settings.get("legacy_compiler",False)
             self.resize_window = settings.get("resize_window",True)
-            self.normalize_headers = settings.get("normalize_headers",2)
+            self.match_mode = settings.get("match_mode",0)
         except: return
 
     def get_unique_name(self,name,target_folder,name_append="-Patched"):
@@ -1011,22 +1013,34 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         else:
             return plistlib.Data(data+b"\x00"*(max(pad_to-len(data),0)))
 
-    def _get_table_id(self, table, id_name, normalize=None):
-        if normalize is None:
-            normalize = self.normalize_headers
+    def _get_table_id(self, table, id_name, mode=None):
+        if mode is None:
+            mode = self.match_mode
         if table is None:
             # No table found - return 0s as a failsafe
-            normalize = 2
-        # 0 = original headers
-        # 1 = normalized headers with unprintable chars replaced by '?'
-        # 2 = all 0s - wildcard to match any value
+            mode = 0
+        # 0 = Any table id, any length
+        # 1 = Any table id, match length
+        # 2 = Match table id, match length
+        # 3 = Match NORMALIZED table id, match length
         zero = self.d.get_hex_bytes("00" * (8 if id_name == "id" else 4))
-        if normalize == 0:
-            return table.get(id_name,zero)
-        elif normalize == 1:
-            return table.get(id_name+"_ascii",table.get(id_name,zero))
-        else:
+        if mode in (0,1):
             return zero
+        elif mode == 2:
+            return table.get(id_name,zero)
+        else:
+            return table.get(id_name+"_ascii",table.get(id_name,zero))
+
+    def _get_table_length(self, table, mode=None):
+        if mode is None:
+            mode = self.match_mode
+        if table is None or mode == 0:
+            # No table found, or we're zeroing the
+            # length - just return 0
+            return 0
+        # If mode is not 0, we return the table
+        # length
+        return table.get("length",0)
 
     def get_clover_patch(self, patch):
         return {
@@ -1040,6 +1054,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         table = patch.get("Table",self.d.get_dsdt_or_only())
         sig   = self._get_table_id(table,"signature")
         t_id  = self._get_table_id(table,"id")
+        leng  = self._get_table_length(table)
         return {
             "Base":           patch.get("Base",""),
             "BaseSkip":       patch.get("BaseSkip",0),
@@ -1053,7 +1068,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
             "Replace":        self.get_data(self.d.get_hex_bytes(patch["Replace"])),
             "ReplaceMask":    self.get_data(patch.get("ReplaceMask",b"")),
             "Skip":           patch.get("Skip",0),
-            "TableLength":    patch.get("Length",table.get("length",0) if table else 0),
+            "TableLength":    patch.get("Length",leng),
             "TableSignature": self.get_data(sig,pad_to=4)
         }
 
@@ -1063,12 +1078,13 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         table = table or self.d.get_dsdt_or_only()
         sig   = self._get_table_id(table,"signature")
         t_id  = self._get_table_id(table,"id")
+        leng  = self._get_table_length(table)
         return {
             "All":            drop.get("All",False),
             "Comment":        drop.get("Comment",""),
             "Enabled":        drop.get("Enabled",True),
             "OemTableId":     self.get_data(t_id,pad_to=8),
-            "TableLength":    drop.get("Length",table.get("length",0)),
+            "TableLength":    drop.get("Length",leng),
             "TableSignature": self.get_data(sig,pad_to=4)
         }
 
@@ -1076,13 +1092,14 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         table = drop.get("Table")
         # Cannot accept None for a table to drop
         table = table or self.d.get_dsdt_or_only()
+        leng  = self._get_table_length(table)
         d = {
             # Strip null chars and then decode to strings
             "Signature": table["signature"].rstrip(b"\x00").decode(),
             "TableId":   table["id"].rstrip(b"\x00").decode(),
         }
         # Only add the length if we have a valid value for it
-        length = drop.get("Length",table.get("length"))
+        length = drop.get("Length",leng)
         if length: d["Length"] = length
         return d
 
@@ -3225,6 +3242,34 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
         self.u.grab("Press [enter] to return...")
         return
 
+    def pick_match_mode(self):
+        while True:
+            self.u.head("Select OpenCore Match Mode")
+            print("")
+            print("1. {}Least Strict{}".format(self.red,self.rst))
+            print("   - Match any table id and any table length")
+            print("2. {}Length Only{}:".format(self.yel,self.rst))
+            print("   - Match any table id, but ensure table length matches")
+            print("3. {}Table Ids and Length{}:".format(self.grn,self.rst))
+            print("   - Match table id/signature and ensure table length matches")
+            print("4. {}Table Ids and Length (NormalizedHeaders){}:".format(self.grn,self.rst))
+            print("   - Match normalized table id/signature and ensure table length matches")
+            print("   - {}!! Only needed with the NormalizeHeaders quirk !!{}".format(self.red,self.rst))
+            print("")
+            print("M. Return to Menu")
+            print("Q. Quit")
+            print("")
+            menu = self.u.grab("Please select an option:  ")
+            if not len(menu):
+                continue
+            elif menu.lower() == "m":
+                return
+            elif menu.lower() == "q":
+                self.u.custom_quit()
+            elif menu in ("1","2","3","4"):
+                self.match_mode = int(menu)-1
+                return
+
     def main(self):
         cwd = os.getcwd()
         lines=[""]
@@ -3263,17 +3308,14 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
         if self.d.iasl_legacy:
             lines.append("L. Use Legacy Compiler for macOS 10.6 and prior: {}".format("{}!! Enabled !!{}".format(self.yel,self.rst) if self.iasl_legacy else "Disabled"))
         lines.append("D. Select ACPI table or folder containing tables")
-        lines.append("H. Header Normalizing: {}".format(
+        lines.append("M. OpenCore Match Mode: {}".format(
             {
-                0:"Disabled (Use Table Ids)",
-                1:"Enabled (Use Table Ids)",
-                2:"Disabled (Match Any Table Ids)"    
-            }.get(self.normalize_headers,"Disabled (Use Table Ids)")
+                0:"{}Least Strict{}".format(self.red,self.rst),
+                1:"{}Length Only{}".format(self.yel,self.rst),
+                2:"{}Table Ids and Length{}".format(self.grn,self.rst),
+                3:"{}Table Ids and Length (NormalizedHeaders){}".format(self.grn,self.rst)
+            }.get(self.match_mode,"{}Unknown{}".format(self.red,self.rst))
         ))
-        if self.normalize_headers == 0:
-            lines.append("   {}!! NOTE !!{} Enable for OpenCore with the NormalizeHeaders quirk".format(self.yel,self.rst))
-        elif self.normalize_headers == 1:
-            lines.append("   {}!! NOTE !!{} Only needed on OpenCore with the NormalizeHeaders quirk".format(self.yel,self.rst))
         lines.append("R. {} Window Resizing".format("Enable" if not self.resize_window else "Disable"))
         lines.append("Q. Quit")
         lines.append("")
@@ -3326,10 +3368,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
         elif menu.lower() == "l" and self.d.iasl_legacy:
             self.iasl_legacy = not self.iasl_legacy
             self.save_settings()
-        elif menu.lower() == "h":
-            self.normalize_headers += 1
-            if self.normalize_headers > 2:
-                self.normalize_headers = 0
+        elif menu.lower() == "m":
+            self.pick_match_mode()
             self.save_settings()
         elif menu.lower() == "r":
             self.resize_window ^= True
