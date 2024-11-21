@@ -35,6 +35,12 @@ class SSDT:
         # 2 = Match table id, match length
         # 3 = Match NORMALIZED table id, match length
         self.match_mode = 0
+        self.match_dict = {
+            0:"{}Least Strict{}".format(self.red,self.rst),
+            1:"{}Length Only{}".format(self.yel,self.rst),
+            2:"{}Table Ids and Length{}".format(self.grn,self.rst),
+            3:"{}Table Ids and Length (NormalizeHeaders){}".format(self.blu,self.rst)
+        }
         self.dsdt = None
         self.settings = os.path.join(os.path.dirname(os.path.realpath(__file__)),"Scripts","settings.json")
         if os.path.exists(self.settings):
@@ -1025,17 +1031,17 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         # 2 = Match table id, match length
         # 3 = Match NORMALIZED table id, match length
         zero = self.d.get_hex_bytes("00" * (8 if id_name == "id" else 4))
-        if mode in (0,1):
-            return zero
-        elif mode == 2:
+        if mode == 2:
             return table.get(id_name,zero)
-        else:
+        elif mode == 3:
             return table.get(id_name+"_ascii",table.get(id_name,zero))
+        else: # 0/1 match any table id
+            return zero
 
     def _get_table_length(self, table, mode=None):
         if mode is None:
             mode = self.match_mode
-        if table is None or mode == 0:
+        if table is None or mode not in (1,2,3):
             # No table found, or we're zeroing the
             # length - just return 0
             return 0
@@ -3247,21 +3253,22 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
         while True:
             self.u.head("Select OpenCore Match Mode")
             print("")
-            print("1. {}Least Strict{}:".format(self.red,self.rst))
+            print("1. {}:".format(self.match_dict[0]))
             print("   - Signature/Table ID Matching: {} ANY {}".format(self.red,self.rst))
             print("   -       Table Length Matching: {} ANY {}".format(self.red,self.rst))
-            print("2. {}Length Only{}:".format(self.yel,self.rst))
+            print("2. {}:".format(self.match_dict[1]))
             print("   - Signature/Table ID Matching: {} ANY {}".format(self.red,self.rst))
             print("   -       Table Length Matching: {}STRICT{}".format(self.grn,self.rst))
-            print("3. {}Table Ids and Length{}:".format(self.grn,self.rst))
+            print("3. {}:".format(self.match_dict[2]))
             print("   !! Requires NormalizeHeaders quirk is {}DISABLED{} in config.plist !!".format(self.red,self.rst))
             print("   - Signature/Table ID Matching: {}STRICT{}".format(self.grn,self.rst))
             print("   -       Table Length Matching: {}STRICT{}".format(self.grn,self.rst))
-            print("4. {}Table Ids and Length (NormalizeHeaders){}:".format(self.blu,self.rst))
+            print("4. {}:".format(self.match_dict[3]))
             print("   !! Requires NormalizeHeaders quirk is {}ENABLED{} in config.plist !!".format(self.grn,self.rst))
             print("   - Signature/Table ID Matching: {}STRICT{}".format(self.grn,self.rst))
             print("   -       Table Length Matching: {}STRICT{}".format(self.grn,self.rst))
             print("")
+            print("Current Match Mode: {}".format(self.match_dict.get(self.match_mode,list(self.match_dict)[0])))
             print("M. Return to Menu")
             print("Q. Quit")
             print("")
@@ -3315,12 +3322,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
             lines.append("L. Use Legacy Compiler for macOS 10.6 and prior: {}".format("{}!! Enabled !!{}".format(self.yel,self.rst) if self.iasl_legacy else "Disabled"))
         lines.append("D. Select ACPI table or folder containing tables")
         lines.append("M. OpenCore Match Mode: {}".format(
-            {
-                0:"{}Least Strict{}".format(self.red,self.rst),
-                1:"{}Length Only{}".format(self.yel,self.rst),
-                2:"{}Table Ids and Length{}".format(self.grn,self.rst),
-                3:"{}Table Ids and Length (NormalizeHeaders){}".format(self.blu,self.rst)
-            }.get(self.match_mode,"{}Unknown{}".format(self.red,self.rst))
+            self.match_dict.get(self.match_mode,list(self.match_dict)[0])
         ))
         lines.append("R. {} Window Resizing".format("Enable" if not self.resize_window else "Disable"))
         lines.append("Q. Quit")
