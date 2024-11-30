@@ -1059,9 +1059,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
 
     def get_oc_patch(self, patch):
         table = patch.get("Table",self.d.get_dsdt_or_only())
-        sig   = self._get_table_id(table,"signature")
-        t_id  = self._get_table_id(table,"id")
-        leng  = self._get_table_length(table)
+        if not isinstance(table,dict):
+            table = {}
         return {
             "Base":           patch.get("Base",""),
             "BaseSkip":       patch.get("BaseSkip",0),
@@ -1071,29 +1070,33 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
             "Find":           self.get_data(self.d.get_hex_bytes(patch["Find"])),
             "Limit":          patch.get("Limit",0),
             "Mask":           self.get_data(patch.get("Mask",b"")),
-            "OemTableId":     self.get_data(t_id,pad_to=8),
+            "OemTableId":     self.get_data(patch.get("TableId",self._get_table_id(table,"id")),pad_to=8),
             "Replace":        self.get_data(self.d.get_hex_bytes(patch["Replace"])),
             "ReplaceMask":    self.get_data(patch.get("ReplaceMask",b"")),
             "Skip":           patch.get("Skip",0),
-            "TableLength":    patch.get("Length",leng),
-            "TableSignature": self.get_data(sig,pad_to=4)
+            "TableLength":    patch.get("Length",self._get_table_length(table)),
+            "TableSignature": self.get_data(patch.get("Signature",self._get_table_id(table,"signature")),pad_to=4)
         }
 
     def get_oc_drop(self, drop):
         table = drop.get("Table")
         # Cannot accept None for a table to drop
         table = table or self.d.get_dsdt_or_only()
-        sig   = self._get_table_id(table,"signature")
-        t_id  = self._get_table_id(table,"id")
-        leng  = self._get_table_length(table)
-        return {
+        assert table
+        oc = {
             "All":            drop.get("All",False),
             "Comment":        drop.get("Comment",""),
             "Enabled":        drop.get("Enabled",True),
-            "OemTableId":     self.get_data(t_id,pad_to=8),
-            "TableLength":    drop.get("Length",leng),
-            "TableSignature": self.get_data(sig,pad_to=4)
+            "OemTableId":     self.get_data(drop.get("TableId",self._get_table_id(table,"id")),pad_to=8),
+            "TableLength":    drop.get("Length",self._get_table_length(table)),
+            "TableSignature": self.get_data(drop.get("Signature",self._get_table_id(table,"signature")),pad_to=4)
         }
+        # Ensure at least one of TableLength, OemTableId, or TableSignature is non-zero
+        def _int(val):
+            return val if isinstance(val,int) else sum([int(x) for x in val])
+        if sum(_int(oc[x]) for x in ("TableLength","OemTableId","TableSignature")) == 0:
+            raise Exception("TableLength, OemTableId, and TableSignature cannot all be zeroes.")
+        return oc
 
     def get_clover_drop(self, drop):
         table = drop.get("Table")
@@ -3090,7 +3093,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         }
         drop = ({
             "Comment":"Drop DMAR Table",
-            "Table":dmar
+            "Table":dmar,
+            "Signature":dmar.get("signature",b"DMAR")
         },)
         self.make_plist(oc, "DMAR.aml", (), drops=drop)
         print("")
