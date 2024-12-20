@@ -3290,7 +3290,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
     def main(self):
         cwd = os.getcwd()
         lines=[""]
-        if self.dsdt:
+        if self.dsdt and self.d.acpi_tables:
             lines.append("Currently Loaded Tables ({:,}):".format(len(self.d.acpi_tables)))
             lines.append("")
             lines.extend(["  "+x for x in textwrap.wrap(
