@@ -24,7 +24,7 @@ class SSDT:
             self.red = self.yel = self.grn = self.blu = self.rst = ""
         if os.name == "nt":
             if 2/3!=0:
-                os.system("color") # Allow ASNI color escapes.
+                os.system("color") # Allow ANSI color escapes.
             self.w = 120
             self.h = 30
         self.iasl_legacy = False
