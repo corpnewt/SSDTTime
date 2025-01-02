@@ -631,6 +631,8 @@ class SSDT:
             self.u.grab("Press [enter] to return to main menu...")
             return
         comment = "Faked Embedded Controller"
+        if laptop:
+            comment += " (Laptop)"
         if rename == True:
             patches.insert(0,{
                 "Comment":"EC to EC0{}".format("" if not ec_sta else " - must come before any EC _STA to XSTA renames!"),
