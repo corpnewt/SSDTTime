@@ -739,7 +739,8 @@ class DSDT:
                 path = []
                 for p in _path[::-1]:
                     path.append(p[0])
-                    if p[0] in ("_SB","_SB_","_PR","_PR_") or p[0].startswith(("\\","_SB.","_SB_.","_PR.","_PR_.")):
+                    p_check = p[0].split(".")[0].rstrip("_")
+                    if p_check.startswith("\\") or p_check in ("_SB","_PR"):
                         # Fully qualified - bail here
                         break
                 path = ".".join(path[::-1]).split(".")
@@ -755,8 +756,9 @@ class DSDT:
                     path = new_path
                 if not path:
                     continue
-                path_str = ".".join(path)
-                path_str = "\\"+path_str if path_str[0] != "\\" else path_str
+                # Ensure we strip trailing underscores for consistency
+                padded_path = [("\\" if j==0 else"")+x.lstrip("\\").rstrip("_") for j,x in enumerate(path)]
+                path_str = ".".join(padded_path)
                 path_list.append((path_str,i,type_match.group("type")))
         return sorted(path_list)
 
@@ -791,21 +793,17 @@ class DSDT:
     def get_device_paths_with_hid(self, hid="ACPI000E", table=None):
         if not table: table = self.get_dsdt_or_only()
         if not table: return []
-        starting_indexes = []
-        for index,line in enumerate(table.get("lines","")):
-            if self.is_hex(line): continue
-            if hid.upper() in line.upper():
-                starting_indexes.append(index)
-        if not starting_indexes: return starting_indexes
+        devs = []
+        for p in table.get("paths",[]):
+            try:
+                if p[0].endswith("._HID") and hid.upper() in table.get("lines")[p[1]]:
+                    # Save the path, strip the ._HID from the end
+                    devs.append(p[0][:-len("._HID")])
+            except: continue
         devices = []
-        for i in starting_indexes:
-            # Walk backwards and get the next parent device
-            pad = len(table.get("lines","")[i]) - len(table.get("lines","")[i].lstrip(" "))
-            for sub,line in enumerate(table.get("lines","")[i::-1]):
-                if "Device (" in line and len(line)-len(line.lstrip(" ")) < pad:
-                    # Add it if it's already in our dsdt_paths - if not, add the current line
-                    device = next((x for x in table.get("paths",[]) if x[1]==i-sub),None)
-                    if device: devices.append(device)
-                    else: devices.append((line,i-sub))
-                    break
+        # Walk the paths again - and save any devices
+        # that match our prior list
+        for p in table.get("paths",[]):
+            if p[0] in devs and p[-1] == "Device":
+                devices.append(p)
         return devices
