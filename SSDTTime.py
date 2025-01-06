@@ -2341,12 +2341,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             if not path: continue
             return path
 
-    def pci_bridge(self):
-        if not self.ensure_dsdt(): return
-        test_path = self.get_device_path()
-        if not test_path: return
-        self.u.head("Building Bridges")
-        print("")
+    def get_device_paths(self):
         print("Gathering ACPI devices...")
         device_dict = {}
         pci_root_paths = []
@@ -2434,6 +2429,15 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                 for r in removed:
                     try: orphaned_devices.remove(r)
                     except ValueError: pass
+        return device_dict
+
+    def pci_bridge(self):
+        if not self.ensure_dsdt(): return
+        test_path = self.get_device_path()
+        if not test_path: return
+        self.u.head("Building Bridges")
+        print("")
+        device_dict = self.get_device_paths()
         print("Matching against {}".format(test_path))
         match = self.get_longest_match(device_dict,test_path)
         if not match:
@@ -2449,9 +2453,25 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             return
         # We got a match
         print("Matched {} - {}".format(match[0],match[1]["path"]))
-        # Check for the longest adj_path as well
-        adj_match = self.get_all_matches(device_dict,test_path,adj=True)
-        if adj_match:
+        # Just force disable adj_match until we figure out an approach for
+        # address overflows - as there seems to be some added complexity there
+        adj_match = None
+        if match[1].get("adr_overflow"):
+            # Get all matches and list the devices whose addresses overflow
+            over_flow = self.get_all_matches(device_dict,match[1]["path"])
+            devs = []
+            for d in over_flow:
+                if d[1].get("dev_overflow"):
+                    devs.extend(d[1]["dev_overflow"])
+            # Make sure we have something to display - at least
+            if devs:
+                print("\n{}!! WARNING !!{} There are _ADR overflows in the device path!".format(self.red,self.rst))
+                print(" - The following devices may need to be adjusted for bridging to work:")
+                # Ensure they're all unique, and we sort them as we print
+                for d in sorted(list(set(devs))):
+                    print(" --> {}".format(d))
+                print("")
+        '''if adj_match:
             print("\nThere are _ADR overflows in the device path!")
             # Get a list of devices to _STA = Zero
             devices = []
@@ -2536,7 +2556,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "ADROVER", 0x00000000)
                     print("{}!! WARNING !!{} _STA to XSTA patches were added - VERIFY BEFORE ENABLING!!".format(self.red,self.rst))
                 print("")
             else:
-                print(" - Devices need to be adjusted for Bridging to work!")
+                print(" - Devices need to be adjusted for Bridging to work!")'''
         if match[2]:
             print(" - No bridge needed!")
             if adj_match: self.patch_warn()
@@ -2594,6 +2614,95 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         print("")
         print("Done.")
         self.patch_warn()
+        self.u.grab("Press [enter] to return...")
+        return
+
+    def sanitize_acpi_path(self, path):
+        # Takes an ACPI path either using ACPI()#ACPI() or
+        # PATH.PATH notation and breaks it into a list of
+        # elements without the leading backslash, and without
+        # the trailing underscore pads
+        path = path.replace("ACPI(","").replace(")","").replace("#",".").replace("\\","")
+        new_path = []
+        valid = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+        for element in path.split("."):
+            element = element.rstrip("_").upper()
+            if len(element) > 4 or not all(x in valid for x in element):
+                # Invalid element, return None
+                return None
+            new_path.append(element)
+        return new_path
+
+    def compare_acpi_paths(self, path, path_list):
+        path_check = self.sanitize_acpi_path(path)
+        if not path_check:
+            return False # Invalid path
+        if not len(path_list) == len(path_check):
+            return False
+        # Same length - check the elements
+        return all((path_list[i] == path_check[i] for i in range(len(path_list))))
+
+    def get_acpi_path(self):
+        while True:
+            self.u.head("Input ACPI Path")
+            print("")
+            print("A valid ACPI path will have one of the following formats:")
+            print("")
+            print("macOS:   \\_SB.PCI0.XHC.RHUB")
+            print("Windows: ACPI(_SB_)#ACPI(PCI0)#ACPI(XHC_)#ACPI(RHUB)")
+            print("")
+            print("M. Main")
+            print("Q. Quit")
+            print(" ")
+            path = self.u.grab("Please enter the ACPI path:\n\n")
+            if path.lower() == "m":
+                return
+            if path.lower() == "q":
+                self.u.custom_quit()
+            path = self.sanitize_acpi_path(path)
+            if not path: continue
+            return path
+
+    def print_acpi_path(self, path):
+        # Takes a list of ACPI path elements, and formats them
+        # into a single path.  Will ensure the first element starts
+        # with \
+        return ".".join([("\\" if i==0 else"")+x.lstrip("\\").rstrip("_") for i,x in enumerate(path)])
+
+    def acpi_device_path(self):
+        if not self.ensure_dsdt(): return
+        test_path = self.get_acpi_path()
+        if not test_path: return
+        print_path = self.print_acpi_path(test_path)
+        self.u.head("ACPI -> Device Path")
+        print("")
+        device_dict = self.get_device_paths()
+        print("Matching against {}".format(print_path))
+        p = next(
+            (x for x in device_dict if self.compare_acpi_paths(x,test_path)),
+            None
+        )
+        if not p:
+            print(" - Not found!")
+            print("")
+            self.u.grab("Press [enter] to return...")
+            return
+        print(" - Matched: {}".format(device_dict[p]["path"]))
+        if device_dict[p].get("adr_overflow"):
+            # Get all matches and list the devices whose addresses overflow
+            over_flow = self.get_all_matches(device_dict,device_dict[p]["path"])
+            devs = []
+            for d in over_flow:
+                if d[1].get("dev_overflow"):
+                    devs.extend(d[1]["dev_overflow"])
+            # Make sure we have something to display - at least
+            if devs:
+                print("\n{}!! WARNING !!{} There are _ADR overflows in the device path!".format(self.red,self.rst))
+                print(" - The following devices may affect property injection:")
+                # Ensure they're all unique, and we sort them as we print
+                for d in sorted(list(set(devs))):
+                    print(" --> {}".format(d))
+                print("")
         self.u.grab("Press [enter] to return...")
         return
 
@@ -3321,6 +3430,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
         lines.append("                   versions - also checks for OSID")
         lines.append("B. Fix DMAR      - Remove Reserved Memory Regions from the DMAR table")
         lines.append("C. SMBus         - Defines an MCHC and BUS0 device for SMBus compatibility")
+        lines.append("E. ACPI > Device - Searches the loaded tables for the passed ACPI path and")
+        lines.append("                   prints the corresponding Device Path")
         lines.append("")
         if sys.platform.startswith("linux") or sys.platform == "win32":
             lines.append("P. Dump the current system's ACPI tables")
@@ -3373,6 +3484,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
             self.fix_dmar()
         elif menu.lower() == "c":
             self.smbus()
+        elif menu.lower() == "e":
+            self.acpi_device_path()
         elif menu.lower() == "p" and (sys.platform.startswith("linux") or sys.platform == "win32"):
             output_folder = os.path.join(os.path.dirname(os.path.realpath(__file__)),self.output)
             acpi_name = self.get_unique_name("OEM",output_folder,name_append="")
