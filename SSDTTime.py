@@ -1116,6 +1116,11 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         return d
 
     def get_irq_choice(self, irqs):
+        if not irqs or not isinstance(irqs,dict):
+            # No IRQNoFlags entries located - or irqs isn't
+            # a dict - just return the same value we would if
+            # the user chose N. None
+            return {}
         hid_pad = max((len(irqs[x].get("hid","")) for x in irqs))
         names_and_hids = ["PIC","IPIC","TMR","TIMR","RTC","RTC0","RTC1","PNPC0000","PNP0100","PNP0B00"]
         defaults = [x for x in irqs if x.upper() in names_and_hids or irqs[x].get("hid","").upper() in names_and_hids]
