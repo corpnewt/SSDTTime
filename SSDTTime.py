@@ -2434,7 +2434,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                 for r in removed:
                     try: orphaned_devices.remove(r)
                     except ValueError: pass
-        return device_dict
+        return (device_dict,pci_root_paths)
 
     def pci_bridge(self):
         if not self.ensure_dsdt(): return
@@ -2442,7 +2442,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         if not test_path: return
         self.u.head("Building Bridges")
         print("")
-        device_dict = self.get_device_paths()
+        device_dict,pci_root_paths = self.get_device_paths()
         print("Matching against {}".format(test_path))
         match = self.get_longest_match(device_dict,test_path)
         if not match:
@@ -2681,7 +2681,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         print_path = self.print_acpi_path(test_path)
         self.u.head("ACPI -> Device Path")
         print("")
-        device_dict = self.get_device_paths()
+        device_dict,_ = self.get_device_paths()
         print("Matching against {}".format(print_path))
         p = next(
             (x for x in device_dict if self.compare_acpi_paths(x,test_path)),
