@@ -3224,9 +3224,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
             return
         self.u.head("SMBus")
         print("")
-        print("Locating bus devices at 0x001F0004 or 0x00140000...")
+        print("Gathering potential bus devices...")
         bus_path = bus_parent = None
-        def get_bus_at_adr(target_adr=0x001F0004):
+        def get_dev_at_adr(target_adr=0x001F0004,exclude_names=("XHC",)):
             # Helper to walk tables looking for device + parent at a
             # provided address
             for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
@@ -3244,17 +3244,49 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
                         # didn't match any devices with "XHC" in their name, and
                         # then return the path + parent path + table name
                         path_parts = path[0].split(".")[:-1]
-                        if len(path_parts) > 1 and not "XHC" in path_parts[-1]:
-                            bus_path = ".".join(path_parts)
-                            bus_parent = ".".join(path_parts[:-1])
-                            return (bus_path,bus_parent,table_name)
-        # Check 0x001F0004 first
-        adr = 0x001F0004
-        bus_check = get_bus_at_adr(adr)
-        if not bus_check:
-            # Check at 0x00140000 next
+                        if len(path_parts) > 1:
+                            # Make sure we account for any excluded names
+                            if exclude_names is None or not \
+                            any(x.lower() in path_parts[-1].lower() for x in exclude_names):
+                                bus_path = ".".join(path_parts)
+                                bus_parent = ".".join(path_parts[:-1])
+                                return (bus_path,bus_parent,table_name)
+        # It seems modern Intel uses 0x001F0004 for the SBus
+        # Legacy Intel uses 0x001F0003 though - which lines up
+        # with modern Intel HDEF/HDAS devices.
+        # AMD uses 0x00140000 - which lines up with Intel XHCI
+        # controllers.  We'll have to try to narrow down which
+        # is valid.
+        #
+        # Get our devices at the potential addresses
+        dev_1F4 = get_dev_at_adr(0x001F0004)
+        dev_1F3 = get_dev_at_adr(0x001F0003,exclude_names=("AZAL","HDEF","HDAS"))
+        dev_1B  = get_dev_at_adr(0x001B0000)
+        dev_14  = get_dev_at_adr(0x00140000)
+        # Initialize our bus_check var
+        bus_check = adr = None
+        # Iterate our checks in order
+        if dev_1F4 and dev_1F3:
+            # We got the newer Intel approach
+            bus_check = dev_1F4
+            adr = 0x001F0004
+        elif dev_1F3 and dev_1B:
+            # We got the older Intel approach
+            bus_check = dev_1F3
+            adr = 0x001F0003
+        elif dev_1F4:
+            # *Likely* newer Intel approach
+            bus_check = dev_1F4
+            adr = 0x001F0004
+        elif dev_1F3:
+            # *Likely* older Intel approach
+            bus_check = dev_1F3
+            adr = 0x001F0003
+        elif dev_14:
+            # Neither of the Intel approaches,
+            # *likely* AMD
+            bus_check = dev_14
             adr = 0x00140000
-            bus_check = get_bus_at_adr(adr)
         if not bus_check:
             # Never found it - report the error and bail
             print(" - Could not locate a valid bus device! Aborting.")
