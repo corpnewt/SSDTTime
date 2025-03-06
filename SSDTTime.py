@@ -3401,6 +3401,75 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
         self.u.grab("Press [enter] to return...")
         return
 
+    def ambient_light_sensor(self):
+        if not self.ensure_dsdt():
+            return
+        self.u.head("Ambient Light Sensor")
+        print("")
+        print("Locating ACPI0008 (ALS) devices...")
+        for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
+            table = self.d.acpi_tables[table_name]
+            print(" Checking {}...".format(table_name))
+            # Try to find any ambient light sensor devices in the
+            # current table
+            als = self.d.get_device_paths_with_hid("ACPI0008",table=table)
+            if als:
+                print(" - Found at {}".format(als[0][0]))
+                print(" --> No fake needed!")
+                print("")
+                self.u.grab("Press [enter] to return to main menu...")
+                return
+        # If we got here - we didn't find any
+        print("No ACPI0008 (ALS) devices found - fake needed...")
+        print("Creating SSDT-ALS0...")
+        ssdt = """//
+// Original source from:
+// https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/Source/SSDT-ALS0.dsl
+//
+DefinitionBlock ("", "SSDT", 2, "CORP", "ALS0", 0x00000000)
+{
+    Scope (_SB)
+    {
+        Device (ALS0)
+        {
+            Name (_HID, "ACPI0008" /* Ambient Light Sensor Device */)  // _HID: Hardware ID
+            Name (_CID, "smc-als")  // _CID: Compatible ID
+            Name (_ALI, 0x012C)  // _ALI: Ambient Light Illuminance
+            Name (_ALR, Package (0x01)  // _ALR: Ambient Light Response
+            {
+                Package (0x02)
+                {
+                    0x64, 
+                    0x012C
+                }
+            })
+            Method (_STA, 0, NotSerialized)  // _STA: Status
+            {
+                If (_OSI ("Darwin"))
+                {
+                    Return (0x0F)
+                }
+                Else
+                {
+                    Return (Zero)
+                }
+            }
+        }
+    }
+}"""
+        oc = {
+            "Comment":"Faked Ambient Light Sensor",
+            "Enabled":True,
+            "Path":"SSDT-ALS0.aml"
+        }
+        self.write_ssdt("SSDT-ALS0",ssdt)
+        self.make_plist(oc,"SSDT-ALS0.aml",())
+        print("")
+        print("Done.")
+        self.patch_warn()
+        self.u.grab("Press [enter] to return...")
+        return
+
     def pick_match_mode(self):
         while True:
             self.u.head("Select OpenCore Match Mode")
@@ -3469,6 +3538,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
         lines.append("C. SMBus         - Defines an MCHC and BUS0 device for SMBus compatibility")
         lines.append("E. ACPI > Device - Searches the loaded tables for the passed ACPI path and")
         lines.append("                   prints the corresponding Device Path")
+        lines.append("F. ALS0          - Defines a fake Ambient Light Sensor")
         lines.append("")
         if sys.platform.startswith("linux") or sys.platform == "win32":
             lines.append("P. Dump the current system's ACPI tables")
@@ -3523,6 +3593,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
             self.smbus()
         elif menu.lower() == "e":
             self.acpi_device_path()
+        elif menu.lower() == "f":
+            self.ambient_light_sensor()
         elif menu.lower() == "p" and (sys.platform.startswith("linux") or sys.platform == "win32"):
             output_folder = os.path.join(os.path.dirname(os.path.realpath(__file__)),self.output)
             acpi_name = self.get_unique_name("OEM",output_folder,name_append="")
