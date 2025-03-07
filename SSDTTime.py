@@ -2355,9 +2355,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
             table = self.d.acpi_tables[table_name]
             # Let's gather our roots - and any other paths that and in _ADR
-            pci_roots = self.d.get_device_paths_with_hid(hid="PNP0A08",table=table)
-            pci_roots += self.d.get_device_paths_with_hid(hid="PNP0A03",table=table)
-            pci_roots += self.d.get_device_paths_with_hid(hid="ACPI0016",table=table)
+            pci_roots = self.d.get_device_paths_with_id(_id="PNP0A08",table=table)
+            pci_roots += self.d.get_device_paths_with_id(_id="PNP0A03",table=table)
+            pci_roots += self.d.get_device_paths_with_id(_id="ACPI0016",table=table)
             paths = self.d.get_path_of_type(obj_type="Name",obj="_ADR",table=table)
             # Let's create our dictionary device paths - starting with the roots
             for path in pci_roots:
@@ -2810,9 +2810,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
                 for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
                     table = self.d.acpi_tables[table_name]
                     print(" Checking {}...".format(table_name))
-                    pci_roots = self.d.get_device_paths_with_hid(hid="PNP0A08",table=table)
-                    pci_roots += self.d.get_device_paths_with_hid(hid="PNP0A03",table=table)
-                    pci_roots += self.d.get_device_paths_with_hid(hid="ACPI0016",table=table)
+                    pci_roots = self.d.get_device_paths_with_id(_id="PNP0A08",table=table)
+                    pci_roots += self.d.get_device_paths_with_id(_id="PNP0A03",table=table)
+                    pci_roots += self.d.get_device_paths_with_id(_id="ACPI0016",table=table)
                     external = []
                     for line in table["lines"]:
                         if not line.strip().startswith("External ("): continue # We don't need it
