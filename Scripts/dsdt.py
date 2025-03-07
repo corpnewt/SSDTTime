@@ -790,16 +790,27 @@ class DSDT:
     def get_processor_paths(self, obj_type="Processor",table=None):
         return self.get_path_of_type(obj_type=obj_type,obj="",table=table)
 
-    def get_device_paths_with_hid(self, hid="ACPI000E", table=None):
+    def get_device_paths_with_id(self,_id="PNP0A03",id_types=("_HID","_CID"),table=None):
         if not table: table = self.get_dsdt_or_only()
         if not table: return []
+        if not isinstance(id_types,(list,tuple)): return []
+        # Strip non-strings from the list
+        id_types = [x.upper() for x in id_types if isinstance(x,str)]
+        if not id_types: return []
+        _id = _id.upper() # Ensure case
         devs = []
         for p in table.get("paths",[]):
             try:
-                if p[0].endswith("._HID") and hid.upper() in table.get("lines")[p[1]]:
-                    # Save the path, strip the ._HID from the end
-                    devs.append(p[0][:-len("._HID")])
-            except: continue
+                for type_check in id_types:
+                    if p[0].endswith(type_check) and _id in table.get("lines")[p[1]]:
+                        # Save the path, strip the suffix and trailing periods
+                        devs.append(p[0][:-len(type_check)].rstrip("."))
+                        # Leave this loop to avoid adding the same device
+                        # multiple times
+                        break
+            except Exception as e:
+                print(e)
+                continue
         devices = []
         # Walk the paths again - and save any devices
         # that match our prior list
@@ -807,3 +818,9 @@ class DSDT:
             if p[0] in devs and p[-1] == "Device":
                 devices.append(p)
         return devices
+
+    def get_device_paths_with_cid(self,cid="PNP0A03",table=None):
+        return self.get_device_paths_with_id(_id=cid,id_types=("_CID",),table=table)
+
+    def get_device_paths_with_hid(self,hid="ACPI000E",table=None):
+        return self.get_device_paths_with_id(_id=hid,id_types=("_HID",),table=table)
