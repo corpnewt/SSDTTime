@@ -1,6 +1,11 @@
 import os, errno, tempfile, shutil, plistlib, sys, binascii, zipfile, getpass, re
 from . import run, downloader, utils
 
+try:
+    FileNotFoundError
+except NameError:
+    FileNotFoundError = IOError
+
 class DSDT:
     def __init__(self, **kwargs):
         self.dl = downloader.Downloader()
@@ -35,22 +40,69 @@ class DSDT:
         self.hex_match  = re.compile(r"^\s*[0-9A-F]{4,}:(\s[0-9A-F]{2})+(\s+\/\/.*)?$")
         self.type_match = re.compile(r".*(?P<type>Processor|Scope|Device|Method|Name) \((?P<name>[^,\)]+).*")
 
-    def _table_signature(self, table_path, table_name = None):
+    def _table_signature(self, table_path, table_name = None, data = None):
         path = os.path.join(table_path,table_name) if table_name else table_path
         if not os.path.isfile(path):
             return None
+        if data:
+            # Got data - make sure there's enough for a signature
+            if len(data) >= 4:
+                return data[:4]
+            else:
+                return None
         # Try to load it and read the first 4 bytes to verify the
         # signature
         with open(path,"rb") as f:
             try:
-                sig = f.read(4)
-                return sig
+                return f.read(4)
             except:
                 pass
         return None
 
-    def table_is_valid(self, table_path, table_name = None):
-        return self._table_signature(table_path,table_name=table_name) in self.allowed_signatures
+    def non_ascii_count(self, data):
+        # Helper to emulate the ACPI_IS_ASCII macro from ACPICA's code
+        # It just appears to check if the passed byte is < 0x80
+        # We'll check all available data though - and return the number
+        # of non-ascii bytes
+        non_ascii = 0
+        for b in data:
+            if not isinstance(b,int):
+                try: b = ord(b)
+                except: b = -1
+            if not b < 0x80:
+                non_ascii += 1
+        return non_ascii
+
+    def table_is_valid(self, table_path, table_name = None, ensure_binary = True, check_signature = True):
+        # Ensure we have a valid file
+        path = os.path.join(table_path,table_name) if table_name else table_path
+        if not os.path.isfile(path):
+            return False
+        # Set up a data placeholder
+        data = None
+        if ensure_binary is not None:
+            # Make sure the table is the right type - load it
+            # and read the data
+            with open(path,"rb") as f:
+                data = f.read()
+            # Make sure we actually got some data
+            if not data:
+                return False
+            # Gather the non-ASCII char count
+            non_ascii_count = self.non_ascii_count(data)
+            if ensure_binary and not non_ascii_count:
+                # We want a binary, but it's all ascii
+                return False
+            elif not ensure_binary and non_ascii_count:
+                # We want ascii, and got a binary
+                return False
+        if check_signature:
+            if not self._table_signature(path,data=data) in self.allowed_signatures:
+                # Check with the function - we didn't load the table
+                # already
+                return False
+        # If we got here - the table passed our checks
+        return True
 
     def get_ascii_print(self, data):
         # Helper to sanitize unprintable characters by replacing them with
@@ -60,7 +112,7 @@ class DSDT:
         for b in data:
             if not isinstance(b,int):
                 try: b = ord(b)
-                except: pass
+                except: b = -1
             if ord(" ") <= b < ord("~"):
                 ascii_string += chr(b)
             else:
@@ -77,15 +129,30 @@ class DSDT:
         failed = []
         try:
             if os.path.isdir(table_path):
-                # Got a directory - gather all files
-                # Gather valid files in the directory
-                valid_files = [x for x in os.listdir(table_path) if self.table_is_valid(table_path,x)]
+                # Got a directory - gather all valid
+                # files in the directory
+                valid_files = [
+                    x for x in os.listdir(table_path) if self.table_is_valid(table_path,x)
+                ]
             elif os.path.isfile(table_path):
-                # Just loading the one table
-                valid_files = [table_path]
+                # Just loading the one table - don't check
+                # the signature - but make sure it's binary
+                if self.table_is_valid(table_path,check_signature=False):
+                    valid_files = [table_path]
+                else:
+                    # Not valid - raise an error
+                    raise FileNotFoundError(
+                        errno.ENOENT,
+                        os.strerror(errno.ENOENT),
+                        "{} is not a valid .aml/.dat file.".format(table_path)
+                    )
             else:
                 # Not a valid path
-                raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), table_path)
+                raise FileNotFoundError(
+                    errno.ENOENT,
+                    os.strerror(errno.ENOENT),
+                    table_path
+                )
             if not valid_files:
                 # No valid files were found
                 raise FileNotFoundError(
