@@ -2580,7 +2580,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             self.u.grab("Press [enter] to return...")
             return
         print("")
-        print("Generating SSDT-Bridge...")
+        print("Creating SSDT-Bridge...")
         # First - we need to define all our header and external references
         ssdt = """// Source and info from:
 // https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/Source/SSDT-BRG0.dsl
@@ -2680,7 +2680,6 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
      */
 }
 """
-        print("")
         self.write_ssdt("SSDT-Bridge",ssdt)
         oc = {"Comment":"Defines missing PCI bridges for property injection","Enabled":True,"Path":"SSDT-Bridge.aml"}
         self.make_plist(oc, "SSDT-Bridge.aml", ())
