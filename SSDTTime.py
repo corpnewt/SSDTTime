@@ -2581,7 +2581,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             return
         print("")
         print("Creating SSDT-Bridge...")
-        # First - we need to define all our header and external references
+        # First - we need to define our header and external references
         ssdt = """// Source and info from:
 // https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/Source/SSDT-BRG0.dsl
 DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
@@ -2592,7 +2592,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
 
 """
         for acpi in external_refs:
-            # All top level entries should be ACPI paths
+            # Walk our external refs and define them at the top
             ssdt += "    External ({}, DeviceObj)\n".format(acpi)
         ssdt += "\n"
 
@@ -2610,17 +2610,19 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         pad = "    "
         acpi = None
         bridge_names = {}
+        # Sorting ensures our hierarchy should remain intact
+        # which vastly simplifies the work we have to do
         for element in sorted(bridge_list):
             # Split our element into path components
             comp = element.split()
             _acpi = comp[0]
-            _match = 0
             # Find our longest match with the last path checked
+            _match = 0
             for i in range(min(len(comp),len(last_path))):
                 if comp[i] != last_path[i]:
                     break
                 _match += 1
-            # Close brackets as needed
+            # Close any open brackets that weren't matched
             if last_path:
                 ssdt = close_brackets(ssdt,len(last_path),len(last_path)-_match)
             # Retain the last path
@@ -2629,8 +2631,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
                 # Set a new scope if we found a different
                 # ACPI path
                 acpi = _acpi
-                ssdt += "    Scope ({})\n".format(acpi)
-                ssdt += """    {\n"""
+                ssdt += pad+"Scope ({})\n".format(acpi)
+                ssdt += pad+"{\n"
             curr_depth = len(comp)
             if curr_depth == 0:
                 continue # top level.. somehow?  Skip.
@@ -2645,18 +2647,25 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
             name = "BRG0"[:-len(brg_num)]+brg_num
             # Add our path to the dict to increment the next count
             bridge_names[parent_path].append(element)
-            # Set up our device definition
-            ssdt += "{0}Device ({1})\n{0}".format(pad*(curr_depth),name)
-            ssdt += """{\n"""
             # Get our padding
-            p = pad*(curr_depth+1)
+            p = pad*(curr_depth)
+            # If this is a final bridge - add note about customization
+            if element in bridge_match:
+                ssdt += p+"// Customize the following device name if needed, eg. GFX0\n"
+            # Set up our device definition
+            ssdt += p+"Device ({})\n".format(name)
+            ssdt += p+"{\n"
+            # Increase our padding
+            p += pad
             if element in bridge_match:
                 # Add our comment
                 ssdt += "{0}// Target Device Path:\n{0}// {1}\n".format(
                     p,
                     bridge_match[element]
                 )
-            # Format the address
+            # Format the address: 0 = Zero, 1 = One,
+            # others are padded to 8 hex digits if
+            # > 0xFFFF
             adr_int = int(comp[-1])
             adr = {
                 0:"Zero",
@@ -2664,11 +2673,12 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
             }.get(
                 adr_int,
                 "0x"+hex(adr_int).upper()[2:].rjust(
-                    8 if adr_int & 0xFFFF0000 else 0,
+                    8 if adr_int > 0xFFFF else 0,
                     "0"
                 )
             )
             ssdt += "{}Name (_ADR, {})\n".format(p,adr)
+        # We finished parsing - clean up after ourselves
         if last_path:
             last_depth = len(last_path)
             # Close any missing elements
