@@ -2273,10 +2273,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                 adr1,adr2 = [int(x,16) for x in bridge.split(",")]
                 # Join the addresses as a 32-bit int
                 adr_int = (adr1 << 16) + adr2
-                adr = {0:"Zero",1:"One"}.get(adr_int,"0x"+hex(adr_int).upper()[2:].rjust(8 if adr1 > 0 else 0,"0"))
-                brg_num = str(hex(len(bridges))[2:].upper())
-                name = "BRG0"[:-len(brg_num)]+brg_num
-                bridges.append((name,adr))
+                bridges.append(adr_int)
             except:
                 return [] # Failed :(
         return bridges
@@ -2326,25 +2323,49 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         return matches
 
     def get_device_path(self):
+        paths = []
         while True:
             self.u.head("Input Device Path")
             print("")
             print("A valid device path will have one of the following formats:")
             print("")
+            print("Current Paths:")
+            if not paths:
+                print(" - None")
+            else:
+                for i,x in enumerate(paths,start=1):
+                    print("{}. {}".format(str(i).rjust(2),x))
+            print("")
             print("macOS:   PciRoot(0x0)/Pci(0x0,0x0)/Pci(0x0,0x0)")
             print("Windows: PCIROOT(0)#PCI(0000)#PCI(0000)")
             print("")
+            if paths:
+                print("A. Accept Paths and Continue")
+            print("C. Clear All")
             print("M. Main")
             print("Q. Quit")
             print(" ")
+            print("Enter the number next to a device path above to remove it.")
             path = self.u.grab("Please enter the device path needing bridges:\n\n")
             if path.lower() == "m":
                 return
-            if path.lower() == "q":
+            elif path.lower() == "q":
                 self.u.custom_quit()
+            elif path.lower() == "a" and paths:
+                return paths
+            elif path.lower() == "c":
+                paths = []
+                continue
+            # Check if it's a number first
+            try:
+                path_int = int(path)
+                del paths[path_int-1]
+                continue
+            except:
+                pass
             path = self.sanitize_device_path(path)
-            if not path: continue
-            return path
+            if not path or path in paths: continue
+            paths.append(path)
 
     def get_device_paths(self):
         print("Gathering ACPI devices...")
@@ -2436,6 +2457,30 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                     except ValueError: pass
         return (device_dict,pci_root_paths)
 
+    def print_unmatched(self, unmatched=None, pci_root_paths=None):
+        print("")
+        if unmatched:
+            print("{}!! WARNING !!{}  No matches were found for the following paths:".format(self.yel,self.rst))
+            print("\n".join(["               {}".format(x) for x in sorted(unmatched)]))
+        else:
+            print("{}!! WARNING !!{}  No matches found!".format(self.yel,self.rst))
+        if pci_root_paths:
+            print("\n{}!! WARNING !!{}  Device paths must start with one of the following PciRoot()".format(self.yel,self.rst))
+            print("               options to match the current ACPI tables:")
+            print("\n".join(["               {}".format(x.get("path",x)) for x in sorted(pci_root_paths)]))
+
+    def print_address_overflow(self, addr_overflow):
+        print("")
+        print("{}!! WARNING !!{}  There are _ADR overflows in the device path!".format(self.red,self.rst))
+        print("               The following devices may need adjustments for bridges to work:")
+        # Ensure they're all unique, and we sort them as we print
+        for d in sorted(list(set(addr_overflow))):
+            print("               {}".format(d))
+
+    def print_failed_bridges(self, failed_bridges):
+        print("\n{}!! WARNING !!{}  The following bridges failed to resolve:".format(self.yel,self.rst))
+        print("\n".join(["               {}".format(x) for x in sorted(failed_bridges)]))
+
     def pci_bridge(self):
         if not self.ensure_dsdt(): return
         test_path = self.get_device_path()
@@ -2443,144 +2488,100 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         self.u.head("Building Bridges")
         print("")
         device_dict,pci_root_paths = self.get_device_paths()
-        print("Matching against {}".format(test_path))
-        match = self.get_longest_match(device_dict,test_path)
-        if not match:
-            if pci_root_paths:
-                print(" - No matches found!  Your device path must start with one of the")
-                print("   following PciRoot() options to match the passed ACPI tables:")
-                for p in pci_root_paths:
-                    print("   --> {}".format(p.get("path",p)))
+        matches = []
+        unmatched = []
+        print("Matching device paths...")
+        for p in sorted(test_path):
+            print(" - {}".format(p))
+            match = self.get_longest_match(device_dict,p)
+            if not match:
+                print(" --> No match found!")
+                unmatched.append(p)
             else:
-                print(" - No matches found!  Please re-check your device path.")
+                # We got a match - check if we need to list bridges needed
+                if match[2]:
+                    print(" --> Matched {} - no bridge needed".format(match[0]))
+                else:
+                    b = p[match[-1]+1:].count("/")+1
+                    print(" --> Matched {} - {:,} bridge{} needed".format(
+                        match[0],
+                        b,
+                        "" if b==1 else "s"
+                    ))
+                matches.append((p,match))
+        if not matches:
+            self.print_unmatched(unmatched=unmatched,pci_root_paths=pci_root_paths)
+            print("")
+            print("No matches found!")
             print("")
             self.u.grab("Press [enter] to return...")
             return
-        # We got a match
-        print("Matched {} - {}".format(match[0],match[1]["path"]))
-        # Just force disable adj_match until we figure out an approach for
-        # address overflows - as there seems to be some added complexity there
-        adj_match = None
-        if match[1].get("adr_overflow"):
-            # Get all matches and list the devices whose addresses overflow
-            over_flow = self.get_all_matches(device_dict,match[1]["path"])
-            devs = []
-            for d in over_flow:
-                if d[1].get("dev_overflow"):
-                    devs.extend(d[1]["dev_overflow"])
-            # Make sure we have something to display - at least
-            if devs:
-                print("\n{}!! WARNING !!{} There are _ADR overflows in the device path!".format(self.red,self.rst))
-                print(" - The following devices may need to be adjusted for bridging to work:")
-                # Ensure they're all unique, and we sort them as we print
-                for d in sorted(list(set(devs))):
-                    print(" --> {}".format(d))
-                print("")
-        '''if adj_match:
-            print("\nThere are _ADR overflows in the device path!")
-            # Get a list of devices to _STA = Zero
-            devices = []
-            for m in adj_match:
-                if not "dev_overflow" in m[1]: continue
-                devices.extend([x for x in m[1]["dev_overflow"] if not x in devices])
-            if devices:
-                print(" - The following devices need to be adjusted for Bridging to work:")
-                for d in devices:
-                    print(" --> {}".format(d))
-                # Walk the paths and generate _STA returns to disable devices
-                print(" - Generating _STA renames as needed...")
-                patches = []
-                ssdt = """
-DefinitionBlock ("", "SSDT", 2, "CORP", "ADROVER", 0x00000000)
-{
-    /*
-     * Start copying here if you're adding this info to an existing SSDT-ADROVER!
-     */"""
-                for d in devices:
-                    sta_check = self.get_sta_var(var=None,device=d,dev_name=d.split(".")[-1])
-                    if not sta_check["valid"]: continue # Borked - skip
-                    patches.extend(sta_check.get("patches",[]))
-                    if not sta_check["sta"]: # No _STA method, override it
-                        ssdt += """
-
-    External ([[device]], DeviceObj)
-
-    Scope ([[device]])
-    {
-        Method (_STA, 0, NotSerialized)  // _STA: Status
-        {
-            If (_OSI ("Darwin"))
-            {
-                Return (Zero)
-            }
-            Else
-            {
-                Return (0x0F)
-            }
-        }
-    }""".replace("[[device]]",d)
-                    else: # Got an _STA method
-                        ssdt += """
-
-    External ([[device]], DeviceObj)
-    External ([[device]].XSTA, [[sta_type]])
-
-    Scope ([[device]])
-    {
-        Name (ZSTA, 0x0F)
-        Method (_STA, 0, NotSerialized)  // _STA: Status
-        {
-            If (_OSI ("Darwin"))
-            {
-                Return (Zero)
-            }
-            // Default to 0x0F - but return the result of the renamed XSTA if possible
-            If ((CondRefOf ([[device]].XSTA)))
-            {
-                Store ([[device]].XSTA[[called]], ZSTA)
-            }
-            Return (ZSTA)
-        }
-    }""".replace("[[device]]",d).replace("[[sta_type]]",sta_check["sta_type"]).replace("[[called]]"," ()" if sta_check["sta_type"]=="MethodObj" else "")
-                ssdt += """
-    /*
-     * End copying here if you're adding this info to an existing SSDT-ADROVER!
-     */
-}"""
-                # Save the SSDT and generate any patches
-                print("Generating SSDT-ADROVER...")
-                self.write_ssdt("SSDT-ADROVER",ssdt)
-                oc = {"Comment":"Disables devices with _ADR overflow for bridging","Enabled":False,"Path":"SSDT-ADROVER.aml"}
-                # Iterate the patches and disable them by default
-                for patch in patches:
-                    patch["Enabled"] = False
-                    patch["Disabled"] = True
-                self.make_plist(oc,None,patches)
-                print("\n{}!! WARNING !!{} SSDT-ADROVER disables existing devices - VERIFY BEFORE ENABLING!!".format(self.red,self.rst))
-                if patches:
-                    print("{}!! WARNING !!{} _STA to XSTA patches were added - VERIFY BEFORE ENABLING!!".format(self.red,self.rst))
-                print("")
-            else:
-                print(" - Devices need to be adjusted for Bridging to work!")'''
-        if match[2]:
-            print(" - No bridge needed!")
-            if adj_match: self.patch_warn()
-            else: print("")
-            self.u.grab("Press [enter] to return...")
-            return
-        remain = test_path[match[-1]+1:]
-        print("Generating bridge{} for {}...".format(
-            "" if not remain.count("/") else "s",
-            remain
-        ))
-        bridges = self.get_bridge_devices(remain)
-        if not bridges:
-            print(" - Something went wrong!")
+        # Check for, and warn about address overflows
+        addr_overflow = []
+        for test_path,match in matches:
+            if match[1].get("adr_overflow"):
+                # Get all matches and list the devices whose addresses overflow
+                over_flow = self.get_all_matches(device_dict,match[1]["path"])
+                for d in over_flow:
+                    if d[1].get("dev_overflow"):
+                        addr_overflow.extend(d[1]["dev_overflow"])
+        # Make sure we have something to display - at least
+        if all(match[1][2] for match in matches):
+            if unmatched:
+                self.print_unmatched(unmatched=unmatched,pci_root_paths=pci_root_paths)
+            if addr_overflow:
+                self.print_address_overflow(addr_overflow)
+            print("")
+            print("No bridges needed!")
             print("")
             self.u.grab("Press [enter] to return...")
             return
-        print("Generating SSDT-Bridge...")
-
+        starting_at = 0
+        print("")
+        print("Resolving bridges...")
+        bridge_match = {}
+        bridge_list = []
+        failed_bridges = []
+        external_refs = []
+        for test_path,match in matches:
+            if match[2]:
+                continue # Skip full matches
+            remain = test_path[match[-1]+1:]
+            print(" - {}".format(remain))
+            bridges = self.get_bridge_devices(remain)
+            if not bridges:
+                print(" --> Could not resolve!")
+                failed_bridges.append(test_path)
+            else:
+                # Join the elements separated by a space to
+                # make parsing easier
+                path = match[0]
+                for i,b in enumerate(bridges,start=1):
+                    path += " " + str(b)
+                    if not path in bridge_list:
+                        bridge_list.append(path)
+                    # Retain the final path for comments later
+                    if i == len(bridges):
+                        bridge_match[path] = test_path
+                # Retain the ACPI path for the SSDT
+                if not match[0] in external_refs:
+                    external_refs.append(match[0])
+        # Make sure we have something in order to continue
+        if not bridge_list:
+            if failed_bridges:
+                self.print_failed_bridges(failed_bridges)
+            if unmatched:
+                self.print_unmatched(unmatched=unmatched,pci_root_paths=pci_root_paths)
+            if addr_overflow:
+                self.print_address_overflow(addr_overflow)
+            print("")
+            print("Something went wrong resolving bridges!")
+            print("")
+            self.u.grab("Press [enter] to return...")
+            return
+        print("")
+        print("Creating SSDT-Bridge...")
+        # First - we need to define our header and external references
         ssdt = """// Source and info from:
 // https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/Source/SSDT-BRG0.dsl
 DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
@@ -2588,36 +2589,118 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
     /*
      * Start copying here if you're adding this info to an existing SSDT-Bridge!
      */
-    External ([[scope]], DeviceObj)
-    Scope ([[scope]])
-    {
-""".replace("[[scope]]",match[0])
-        ssdt_end = """    }
+
+"""
+        for acpi in external_refs:
+            # Walk our external refs and define them at the top
+            ssdt += "    External ({}, DeviceObj)\n".format(acpi)
+        ssdt += "\n"
+
+        def close_brackets(ssdt,depth,iterations=1,pad="    "):
+            # Helper to close brackets based on depth and
+            # iteration count
+            while iterations > 0:
+                ssdt += (pad*depth)+"}\n"
+                iterations -= 1
+                depth -= 1
+            return ssdt
+
+        # Walk the bridge list and define elements as we go
+        last_path = []
+        pad = "    "
+        acpi = None
+        bridge_names = {}
+        # Sorting ensures our hierarchy should remain intact
+        # which vastly simplifies the work we have to do
+        for element in sorted(bridge_list):
+            # Split our element into path components
+            comp = element.split()
+            _acpi = comp[0]
+            # Find our longest match with the last path checked
+            _match = 0
+            for i in range(min(len(comp),len(last_path))):
+                if comp[i] != last_path[i]:
+                    break
+                _match += 1
+            # Close any open brackets that weren't matched
+            if last_path:
+                ssdt = close_brackets(ssdt,len(last_path),len(last_path)-_match)
+            # Retain the last path
+            last_path = comp
+            if _acpi != acpi:
+                # Set a new scope if we found a different
+                # ACPI path
+                acpi = _acpi
+                ssdt += pad+"Scope ({})\n".format(acpi)
+                ssdt += pad+"{\n"
+            curr_depth = len(comp)
+            if curr_depth == 0:
+                continue # top level.. somehow?  Skip.
+            # Got a new device - pad and define
+            parent_path = " ".join(comp[:-1])
+            # Get our bridge name by keeping track of
+            # the number of bridges per parent path
+            if not parent_path in bridge_names:
+                bridge_names[parent_path] = []
+            # Generate a name from the bridge number
+            brg_num = str(hex(len(bridge_names[parent_path]))[2:].upper())
+            name = "BRG0"[:-len(brg_num)]+brg_num
+            # Add our path to the dict to increment the next count
+            bridge_names[parent_path].append(element)
+            # Get our padding
+            p = pad*(curr_depth)
+            # If this is a final bridge - add note about customization
+            if element in bridge_match:
+                ssdt += p+"// Customize the following device name if needed, eg. GFX0\n"
+            # Set up our device definition
+            ssdt += p+"Device ({})\n".format(name)
+            ssdt += p+"{\n"
+            # Increase our padding
+            p += pad
+            if element in bridge_match:
+                # Add our comment
+                ssdt += "{0}// Target Device Path:\n{0}// {1}\n".format(
+                    p,
+                    bridge_match[element]
+                )
+            # Format the address: 0 = Zero, 1 = One,
+            # others are padded to 8 hex digits if
+            # > 0xFFFF
+            adr_int = int(comp[-1])
+            adr = {
+                0:"Zero",
+                1:"One"
+            }.get(
+                adr_int,
+                "0x"+hex(adr_int).upper()[2:].rjust(
+                    8 if adr_int > 0xFFFF else 0,
+                    "0"
+                )
+            )
+            ssdt += "{}Name (_ADR, {})\n".format(p,adr)
+        # We finished parsing - clean up after ourselves
+        if last_path:
+            last_depth = len(last_path)
+            # Close any missing elements
+            ssdt = close_brackets(ssdt,last_depth,last_depth)
+        # Close the final bracket
+        ssdt += """
     /*
      * End copying here if you're adding this info to an existing SSDT-Bridge!
      */
 }
 """
-        # Let's iterate our bridges
-        pc = "    " # Pad char
-        for i,bridge in enumerate(bridges,start=2):
-            if i-1==len(bridges):
-                ssdt += pc*i + "// Customize this device name if needed, eg. GFX0\n"
-                ssdt += pc*i + "Device (PXSX)\n"
-            else:
-                ssdt += pc*i + "Device ({})\n".format(bridge[0])
-            ssdt += pc*i + "{\n"
-            if i-1==len(bridges):
-                ssdt += pc*(i+1) + "// Target Device Path:\n"
-                ssdt += pc*(i+1) + "// {}\n".format(test_path)
-            ssdt += pc*(i+1) + "Name (_ADR, {})\n".format(bridge[1])
-            ssdt_end = pc*i + "}\n" + ssdt_end
-        ssdt += ssdt_end
         self.write_ssdt("SSDT-Bridge",ssdt)
         oc = {"Comment":"Defines missing PCI bridges for property injection","Enabled":True,"Path":"SSDT-Bridge.aml"}
         self.make_plist(oc, "SSDT-Bridge.aml", ())
         print("")
         print("Done.")
+        if failed_bridges:
+            self.print_failed_bridges(failed_bridges)
+        if unmatched:
+            self.print_unmatched(unmatched=unmatched,pci_root_paths=pci_root_paths)
+        if addr_overflow:
+            self.print_address_overflow(addr_overflow)
         self.patch_warn()
         self.u.grab("Press [enter] to return...")
         return
