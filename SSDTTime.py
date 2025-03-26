@@ -316,6 +316,8 @@ class SSDT:
                 print("NOTE:  Currently running as admin on Windows - drag and drop may not work.")
                 print("       Shift + right-click in Explorer and select 'Copy as path' then paste here instead.")
                 print("")
+            if sys.platform.startswith("linux") or sys.platform == "win32":
+                print("P. Dump the current system's ACPI tables")
             print("M. Main")
             print("Q. Quit")
             print(" ")
@@ -325,9 +327,15 @@ class SSDT:
                 print("       returned to the main menu.")
                 print("")
             dsdt = self.u.grab("Please drag and drop an ACPI table or folder of tables here:  ")
-            if dsdt.lower() == "m":
+            if dsdt.lower() == "p" and (sys.platform.startswith("linux") or sys.platform == "win32"):
+                output_folder = os.path.join(os.path.dirname(os.path.realpath(__file__)),self.output)
+                acpi_name = self.get_unique_name("OEM",output_folder,name_append="")
+                return self.load_dsdt(
+                    self.d.dump_tables(os.path.join(output_folder,acpi_name))
+                )
+            elif dsdt.lower() == "m":
                 return self.dsdt
-            if dsdt.lower() == "q":
+            elif dsdt.lower() == "q":
                 self.u.custom_quit()
             out = self.u.check_path(dsdt)
             if not out: continue
