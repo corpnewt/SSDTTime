@@ -1896,13 +1896,22 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
         self.patch_warn()
         self.u.grab("Press [enter] to return...")
 
-    def get_unique_device(self, path, base_name, starting_number=0, used_names = []):
+    def get_unique_device(self, parent_path, base_name, starting_number=0, used_names=[]):
         # Appends a hex number until a unique device is found
         while True:
-            hex_num = hex(starting_number).replace("0x","").upper()
-            name = base_name[:-1*len(hex_num)]+hex_num
-            if not len(self.d.get_device_paths("."+name)) and not name in used_names:
+            if starting_number < 0:
+                # Try the original name first
+                name = base_name
+                # Ensure the starting number will be 0 next loop
+                starting_number = -1
+            else:
+                # Append the number to the name
+                hex_num = hex(starting_number).replace("0x","").upper()
+                name = base_name[:-1*len(hex_num)]+hex_num
+            # Check if the name exists
+            if not len(self.d.get_device_paths(parent_path.rstrip(".")+"."+name)) and not name in used_names:
                 return (name,starting_number)
+            # Increment the starting number
             starting_number += 1
 
     def ssdt_rhub(self):
@@ -1936,10 +1945,20 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "RTCAWAC", 0x00000000)
                 task["device"] = ".".join(task["device"].split(".")[:-1])
                 task["parent"] = ".".join(task["device"].split(".")[:-1])
                 if name.startswith("EHC"):
-                    task["rename"],ehc_num = self.get_unique_device(task["parent"],"EH01",ehc_num,used_names)
+                    task["rename"],ehc_num = self.get_unique_device(
+                        task["parent"],
+                        "EH01",
+                        starting_number=ehc_num,
+                        used_names=used_names
+                    )
                     ehc_num += 1 # Increment the name number
                 else:
-                    task["rename"],xhc_num = self.get_unique_device(task["parent"],"XHCI",xhc_num,used_names)
+                    task["rename"],xhc_num = self.get_unique_device(
+                        task["parent"],
+                        "XHCI",
+                        starting_number=xhc_num,
+                        used_names=used_names
+                    )
                     xhc_num += 1 # Increment the name number
                 used_names.append(task["rename"])
             else:
@@ -2331,18 +2350,24 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         return matches
 
     def get_device_path(self):
-        paths = []
+        paths = {}
         while True:
             self.u.head("Input Device Path")
-            print("")
-            print("A valid device path will have one of the following formats:")
             print("")
             print("Current Paths:")
             if not paths:
                 print(" - None")
             else:
                 for i,x in enumerate(paths,start=1):
-                    print("{}. {}".format(str(i).rjust(2),x))
+                    if paths[x]:
+                        print("{}. {} {}".format(
+                            str(i).rjust(2),x,paths[x]
+                        ))
+                    else:
+                        print("{}. {}".format(str(i).rjust(2),x))
+            print("")
+            print("A valid device path will have one of the following formats,")
+            print("optionally followed by a 4-digit device name:")
             print("")
             print("macOS:   PciRoot(0x0)/Pci(0x0,0x0)/Pci(0x0,0x0)")
             print("Windows: PCIROOT(0)#PCI(0000)#PCI(0000)")
@@ -2362,7 +2387,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             elif path.lower() == "a" and paths:
                 return paths
             elif path.lower() == "c":
-                paths = []
+                paths = {}
                 continue
             # Check if it's a number first
             try:
@@ -2371,9 +2396,27 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                 continue
             except:
                 pass
+            # Extract the path and device
+            # if specified
+            path_dev = path.split()
+            dev = None
+            if len(path_dev) == 1:
+                path = path_dev[0]
+            elif len(path_dev) == 2:
+                path,dev = path_dev
+            else:
+                continue # Incorrect formatting
+            # Make sure the device is valid
+            if dev:
+                dev = dev.replace("_","")[:4]
+                if not dev.isalnum():
+                    continue
+                dev = dev.upper().ljust(4,"0")
             path = self.sanitize_device_path(path)
-            if not path or path in paths: continue
-            paths.append(path)
+            if not path:
+                continue
+            # Add our path at the end
+            paths[path] = dev
 
     def get_device_paths(self):
         print("Gathering ACPI devices...")
@@ -2491,15 +2534,15 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
 
     def pci_bridge(self):
         if not self.ensure_dsdt(): return
-        test_path = self.get_device_path()
-        if not test_path: return
+        path_dict = self.get_device_path()
+        if not path_dict: return
         self.u.head("Building Bridges")
         print("")
         device_dict,pci_root_paths = self.get_device_paths()
         matches = []
         unmatched = []
         print("Matching device paths...")
-        for p in sorted(test_path):
+        for p in sorted(path_dict):
             print(" - {}".format(p))
             match = self.get_longest_match(device_dict,p)
             if not match:
@@ -2618,6 +2661,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
         pad = "    "
         acpi = None
         bridge_names = {}
+        acpi_paths = {}
         # Sorting ensures our hierarchy should remain intact
         # which vastly simplifies the work we have to do
         for element in sorted(bridge_list):
@@ -2651,15 +2695,33 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
             if not parent_path in bridge_names:
                 bridge_names[parent_path] = []
             # Generate a name from the bridge number
-            brg_num = str(hex(len(bridge_names[parent_path]))[2:].upper())
-            name = "BRG0"[:-len(brg_num)]+brg_num
+            parent_acpi = acpi_paths.get(parent_path,_acpi)
+            brg_basename = path_dict.get(bridge_match.get(element))
+            name,num = self.get_unique_device(
+                parent_acpi,
+                brg_basename or "BRG0",
+                starting_number=-1, # Try the original name first
+                used_names=bridge_names[parent_path]
+            )
             # Add our path to the dict to increment the next count
-            bridge_names[parent_path].append(element)
+            bridge_names[parent_path].append(name)
+            # Set our acpi path for any child elements
+            acpi_paths[element] = parent_acpi+"."+name
             # Get our padding
             p = pad*(curr_depth)
             # If this is a final bridge - add note about customization
             if element in bridge_match:
-                ssdt += p+"// Customize the following device name if needed, eg. GFX0\n"
+                if brg_basename:
+                    # We got a custom bridge name
+                    if brg_basename != name:
+                        # It was overridden - make a note
+                        ssdt += p+"// User-provided name '{}' supplied, incremented for uniqueness\n".format(brg_basename)
+                    else:
+                        # It was used as provided
+                        ssdt += p+"// User-provided name '{}' supplied\n".format(brg_basename)
+                else:
+                    # Just leave a note about potentially customizing the name
+                    ssdt += p+"// Customize the following device name if needed, eg. GFX0\n"
             # Set up our device definition
             ssdt += p+"Device ({})\n".format(name)
             ssdt += p+"{\n"
