@@ -544,13 +544,13 @@ class PatchMerge:
             return
         if menu.lower() == "q":
             self.u.custom_quit()
-        elif menu == "c":
+        elif menu.lower() == "c":
             self.select_plist()
-        elif menu == "o":
+        elif menu.lower() == "o":
             self.overwrite ^= True
-        elif menu == "r":
+        elif menu.lower() == "r":
             self.select_results_folder()
-        elif menu == "p" and self.config_path and target_exists:
+        elif menu.lower() == "p" and self.config_path and target_exists:
             self.patch_plist()
 
 if __name__ == '__main__':
