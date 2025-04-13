@@ -786,7 +786,10 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
             }
             Else
             {
-                Return (Zero)
+                Return (Buffer (One)
+                {
+                    Zero
+                })
             }
         }
     }
