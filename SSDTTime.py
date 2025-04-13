@@ -767,8 +767,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
     External ([[CPUName]], ProcessorObj)
     Scope ([[CPUName]])
     {
-        If (_OSI ("Darwin")) {
-            Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+        Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+        {
+            If (_OSI ("Darwin"))
             {
                 If (LNot (Arg2))
                 {
@@ -782,6 +783,10 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlug", 0x00003000)
                     "plugin-type", 
                     One
                 })
+            }
+            Else
+            {
+                Return (Zero)
             }
         }
     }
