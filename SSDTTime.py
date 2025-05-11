@@ -3380,6 +3380,32 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         self.u.grab("Press [enter] to return...")
         return
 
+    def get_dev_at_adr(self,target_adr=0x001F0004,exclude_names=("XHC",)):
+        # Helper to walk tables looking for device + parent at a
+        # provided address
+        for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
+            table = self.d.acpi_tables[table_name]
+            paths = self.d.get_path_of_type(obj_type="Name",obj="_ADR",table=table)
+            for path in paths:
+                adr = self.get_address_from_line(path[1],table=table)
+                # Check by address
+                # - Intel tables seem to have it at 0x001F0004
+                # - AMD tables seem to have it at 0x00140000
+                #   Though this matches Intel chipset USB 3 controllers
+                #   so we'll need to also check names and such.
+                if adr == target_adr:
+                    # Ensure our path minus ._ADR is not top level, that we
+                    # didn't match any devices with "XHC" in their name, and
+                    # then return the path + parent path + table name
+                    path_parts = path[0].split(".")[:-1]
+                    if len(path_parts) > 1:
+                        # Make sure we account for any excluded names
+                        if exclude_names is None or not \
+                        any(x.lower() in path_parts[-1].lower() for x in exclude_names):
+                            _path = ".".join(path_parts)
+                            _parent = ".".join(path_parts[:-1])
+                            return (_path,_parent,table_name)
+
     def smbus(self):
         if not self.ensure_dsdt():
             return
@@ -3387,31 +3413,6 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         print("")
         print("Gathering potential bus devices...")
         bus_path = bus_parent = None
-        def get_dev_at_adr(target_adr=0x001F0004,exclude_names=("XHC",)):
-            # Helper to walk tables looking for device + parent at a
-            # provided address
-            for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
-                table = self.d.acpi_tables[table_name]
-                paths = self.d.get_path_of_type(obj_type="Name",obj="_ADR",table=table)
-                for path in paths:
-                    adr = self.get_address_from_line(path[1],table=table)
-                    # Check by address
-                    # - Intel tables seem to have it at 0x001F0004
-                    # - AMD tables seem to have it at 0x00140000
-                    #   Though this matches Intel chipset USB 3 controllers
-                    #   so we'll need to also check names and such.
-                    if adr == target_adr:
-                        # Ensure our path minus ._ADR is not top level, that we
-                        # didn't match any devices with "XHC" in their name, and
-                        # then return the path + parent path + table name
-                        path_parts = path[0].split(".")[:-1]
-                        if len(path_parts) > 1:
-                            # Make sure we account for any excluded names
-                            if exclude_names is None or not \
-                            any(x.lower() in path_parts[-1].lower() for x in exclude_names):
-                                bus_path = ".".join(path_parts)
-                                bus_parent = ".".join(path_parts[:-1])
-                                return (bus_path,bus_parent,table_name)
         # It seems modern Intel uses 0x001F0004 for the SBus
         # Legacy Intel uses 0x001F0003 though - which lines up
         # with modern Intel HDEF/HDAS devices.
@@ -3420,10 +3421,10 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PNLF", 0x00000000)
         # is valid.
         #
         # Get our devices at the potential addresses
-        dev_1F4 = get_dev_at_adr(0x001F0004)
-        dev_1F3 = get_dev_at_adr(0x001F0003,exclude_names=("AZAL","HDEF","HDAS"))
-        dev_1B  = get_dev_at_adr(0x001B0000)
-        dev_14  = get_dev_at_adr(0x00140000)
+        dev_1F4 = self.get_dev_at_adr(0x001F0004)
+        dev_1F3 = self.get_dev_at_adr(0x001F0003,exclude_names=("AZAL","HDEF","HDAS"))
+        dev_1B  = self.get_dev_at_adr(0x001B0000)
+        dev_14  = self.get_dev_at_adr(0x00140000)
         # Initialize our bus_check var
         bus_check = adr = None
         # Iterate our checks in order
@@ -3631,6 +3632,143 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "ALS0", 0x00000000)
         self.u.grab("Press [enter] to return...")
         return
 
+    def imei_bridge(self):
+        if not self.ensure_dsdt():
+            return
+        def fake_note():
+            print("\n{}NOTE:{}  Ensure you fake the IMEI device-id as applicable in DeviceProperties:".format(self.yel,self.rst))
+            print("")
+            print("       If you have a Sandy Bridge CPU with a 7-series chipset:")
+            print("        - device-id | Data | <3A1C0000>")
+            print("")
+            print("       If you have an Ivy Bridge CPU with a 6-series chipset:")
+            print("        - device-id | Data | <3A1E0000>")
+            print("")
+        def print_line(line,lines=[]):
+            print(line)
+            lines.append(line)
+            return lines
+        self.u.head("IMEI Bridge")
+        lines = print_line("")
+        lines = print_line("Locating iGPU device at address 0x00020000...",lines)
+        parent = None
+        igpu = self.get_dev_at_adr(0x00020001)
+        if not igpu:
+            lines = print_line(" - Not located!",lines)
+            lines = print_line("Attempting to locate PCI Roots...",lines)
+            pci_roots = []
+            for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
+                table = self.d.acpi_tables[table_name]
+                pci_roots = self.d.get_device_paths_with_id(_id="PNP0A08",table=table)
+                pci_roots += self.d.get_device_paths_with_id(_id="PNP0A03",table=table)
+                pci_roots += self.d.get_device_paths_with_id(_id="ACPI0016",table=table)
+                if pci_roots:
+                    break # Bail on the first match
+            if not pci_roots:
+                print(" - None found!  Cannot continue.")
+                print("")
+                self.u.grab("Press [enter] to reeturn to main menu...")
+                return
+            parent = pci_roots[0][0]
+            lines = print_line(" - Located at {}".format(parent),lines)
+        else:
+            lines = print_line(" - Located at {}".format(igpu[0]),lines)
+            parent = ".".join(igpu[0].split(".")[:-1])
+        lines = print_line("Locating IMEI devices at address 0x00160000...",lines)
+        imei = self.get_dev_at_adr(0x00160000)
+        if imei:
+            print(" - Located at {}".format(
+                imei[0]
+            ))
+            print(" --> No bridge needed!")
+            fake_note()
+            self.u.grab("Press [enter] to return to main menu...")
+            return
+        # We didn't find it
+        lines = print_line(" - Not located - bridge needed",lines)
+        lines = print_line("Gathering device-id approach...")
+        # Ask the user what approach they're using
+        approach = None
+        while True:
+            self.u.head("Fake Device-ID")
+            print("")
+            print("Select your current CPU and chipset configuration:")
+            print("")
+            print("1. Sandy Bridge CPU with 7-series chipset")
+            print("2. Ivy Bridge CPU with 6-series chipset")
+            print("3. Do not fake device-id in SSDT (requires DeviceProperties)")
+            print("")
+            print("M. Main Menu")
+            print("Q. Quit")
+            print("")
+            m = self.u.grab("Please select an option:  ")
+            if not m: continue
+            if m.lower() == "m":
+                return
+            if m.lower() == "q":
+                self.u.custom_quit()
+            if m not in ("1","2","3"):
+                continue
+            approach = {"1":1,"2":2}.get(m)
+            break
+        # Restore the lines up to this point
+        self.u.head("IMEI Bridge")
+        print("\n".join(lines))
+        if approach is None:
+            print(" - Only building bridge, must fake using DeviceProperties!")
+        elif approach == 1:
+            print(" - Faking IMEI as 6-series to match Sandy Bridge CPU")
+        else:
+            print(" - Faking IMEI as 7-series to match Ivy Bridge CPU")
+        print("Creating SSDT-IMEI...")
+        ssdt = """//
+// Original source from:
+// https://github.com/acidanthera/OpenCorePkg/blob/master/Docs/AcpiSamples/Source/SSDT-IMEI.dsl
+//
+DefinitionBlock ("", "SSDT", 2, "CORP", "IMEI", 0x00000000)
+{
+    External ([[parent]], DeviceObj)
+
+    Scope ([[parent]])
+    {
+        Device (IMEI)
+        {
+            Name (_ADR, 0x00160000)  // _ADR: Address""".replace("[[parent]]",parent)
+        if approach is not None:
+            # We're providing the fake in-line
+            ssdt += """
+            Method (_DSM, 4, NotSerialized)
+            {
+                If (LEqual (Arg2, Zero)) {
+                    Return (Buffer (One) { 0x03 })
+                }
+                Return (Package (0x02)
+                {
+                    "device-id",
+                    Buffer (0x04) { 0x3A, 0x1[[fake]], 0x00, 0x00 }
+                })
+            }""".replace("[[fake]]","C" if approach == 1 else "E")
+        ssdt += """
+        }
+    }
+}
+"""
+        oc = {
+            "Comment":"IMEI Bridge to Allow Faking for Exotic CPU+Mobo Configurations",
+            "Enabled":True,
+            "Path":"SSDT-IMEI.aml"
+        }
+        self.write_ssdt("SSDT-IMEI",ssdt)
+        self.make_plist(oc,"SSDT-IMEI.aml",())
+        if approach is None:
+            fake_note()
+        else:
+            print("")
+        print("Done.")
+        self.patch_warn()
+        self.u.grab("Press [enter] to return...")
+        return
+
     def pick_match_mode(self):
         while True:
             self.u.head("Select OpenCore Match Mode")
@@ -3700,6 +3838,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "ALS0", 0x00000000)
         lines.append("E. ACPI > Device - Searches the loaded tables for the passed ACPI path and")
         lines.append("                   prints the corresponding Device Path")
         lines.append("F. ALS0          - Defines a fake Ambient Light Sensor")
+        lines.append("G. IMEI Bridge   - Defines IMEI - only needed on SNB + 7-series or IVB + 6-series")
         lines.append("")
         if sys.platform.startswith("linux") or sys.platform == "win32":
             lines.append("P. Dump the current system's ACPI tables")
@@ -3756,6 +3895,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "ALS0", 0x00000000)
             self.acpi_device_path()
         elif menu.lower() == "f":
             self.ambient_light_sensor()
+        elif menu.lower() == "g":
+            self.imei_bridge()
         elif menu.lower() == "p" and (sys.platform.startswith("linux") or sys.platform == "win32"):
             output_folder = os.path.join(os.path.dirname(os.path.realpath(__file__)),self.output)
             acpi_name = self.get_unique_name("OEM",output_folder,name_append="")
