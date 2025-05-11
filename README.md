@@ -28,6 +28,8 @@ Supports macOS, Linux and Windows
     - Remove Reserved Memory Regions from the DMAR table
 - SSDT-SBUS-MCHC
     - Defines an MCHC and BUS0 device for SMBus compatibility
+- IMEI Bridge
+    - Defines IMEI - only needed on SNB + 7-series or IVB + 6-series
     
 Additionally on Linux and Windows the tool can be used to dump the system DSDT.
 
