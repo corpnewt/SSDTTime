@@ -3652,7 +3652,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "ALS0", 0x00000000)
         lines = print_line("")
         lines = print_line("Locating iGPU device at address 0x00020000...",lines)
         parent = None
-        igpu = self.get_dev_at_adr(0x00020001)
+        igpu = self.get_dev_at_adr(0x00020000)
         if not igpu:
             lines = print_line(" - Not located!",lines)
             lines = print_line("Attempting to locate PCI Roots...",lines)
