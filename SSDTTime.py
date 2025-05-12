@@ -3650,30 +3650,6 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "ALS0", 0x00000000)
             return lines
         self.u.head("IMEI Bridge")
         lines = print_line("")
-        lines = print_line("Locating iGPU device at address 0x00020000...",lines)
-        parent = None
-        igpu = self.get_dev_at_adr(0x00020000)
-        if not igpu:
-            lines = print_line(" - Not located!",lines)
-            lines = print_line("Attempting to locate PCI Roots...",lines)
-            pci_roots = []
-            for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
-                table = self.d.acpi_tables[table_name]
-                pci_roots = self.d.get_device_paths_with_id(_id="PNP0A08",table=table)
-                pci_roots += self.d.get_device_paths_with_id(_id="PNP0A03",table=table)
-                pci_roots += self.d.get_device_paths_with_id(_id="ACPI0016",table=table)
-                if pci_roots:
-                    break # Bail on the first match
-            if not pci_roots:
-                print(" - None found!  Cannot continue.")
-                print("")
-                self.u.grab("Press [enter] to reeturn to main menu...")
-                return
-            parent = pci_roots[0][0]
-            lines = print_line(" - Located at {}".format(parent),lines)
-        else:
-            lines = print_line(" - Located at {}".format(igpu[0]),lines)
-            parent = ".".join(igpu[0].split(".")[:-1])
         lines = print_line("Locating IMEI devices at address 0x00160000...",lines)
         imei = self.get_dev_at_adr(0x00160000)
         if imei:
@@ -3686,6 +3662,32 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "ALS0", 0x00000000)
             return
         # We didn't find it
         lines = print_line(" - Not located - bridge needed",lines)
+        lines = print_line("Checking for parent device...")
+        lines = print_line(" - Locating iGPU device at address 0x00020000...",lines)
+        parent = None
+        igpu = self.get_dev_at_adr(0x00020000)
+        if not igpu:
+            lines = print_line(" --> Not located!",lines)
+            lines = print_line(" - Attempting to locate PCI Roots...",lines)
+            pci_roots = []
+            for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
+                table = self.d.acpi_tables[table_name]
+                pci_roots = self.d.get_device_paths_with_id(_id="PNP0A08",table=table)
+                pci_roots += self.d.get_device_paths_with_id(_id="PNP0A03",table=table)
+                pci_roots += self.d.get_device_paths_with_id(_id="ACPI0016",table=table)
+                if pci_roots:
+                    break # Bail on the first match
+            if not pci_roots:
+                print(" --> None found!  Cannot continue.")
+                print("")
+                self.u.grab("Press [enter] to reeturn to main menu...")
+                return
+            parent = pci_roots[0][0]
+            lines = print_line(" --> Located at {}".format(parent),lines)
+        else:
+            lines = print_line(" --> Located at {}".format(igpu[0]),lines)
+            parent = ".".join(igpu[0].split(".")[:-1])
+            lines = print_line(" --> Using parent: {}".format(parent),lines)
         lines = print_line("Gathering device-id approach...")
         # Ask the user what approach they're using
         approach = None
@@ -3838,7 +3840,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "IMEI", 0x00000000)
         lines.append("E. ACPI > Device - Searches the loaded tables for the passed ACPI path and")
         lines.append("                   prints the corresponding Device Path")
         lines.append("F. ALS0          - Defines a fake Ambient Light Sensor")
-        lines.append("G. IMEI Bridge   - Defines IMEI - only needed on SNB + 7-series or IVB + 6-series")
+        lines.append("G. IMEI Bridge   - Defines IMEI - only needed on SNB+7-series or IVB+6-series")
         lines.append("")
         if sys.platform.startswith("linux") or sys.platform == "win32":
             lines.append("P. Dump the current system's ACPI tables")
