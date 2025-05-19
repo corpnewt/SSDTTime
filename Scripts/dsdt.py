@@ -294,23 +294,29 @@ class DSDT:
                     hexb = self.get_hex_bytes(hexs.replace(" ",""))
                     # Get the last occurrence after the split
                     remaining = target_files[file]["raw"].split(hexb)[-1]
-                    # Iterate in chunks of 16
-                    for chunk in [remaining[i:i+16] for i in range(0,len(remaining),16)]:
-                        # Build a new byte string
-                        hex_string = binascii.hexlify(chunk)
-                        # Decode the bytes if we're on python 3
-                        if 2/3!=0: hex_string = hex_string.decode()
-                        # Ensure the bytes are all upper case
-                        hex_string = hex_string.upper()
-                        l = "   {}: {}".format(
-                            hex(next_addr)[2:].upper().rjust(4,"0"),
-                            " ".join([hex_string[i:i+2] for i in range(0,len(hex_string),2)])
-                        )
-                        # Increment our address
-                        next_addr += len(chunk)
-                        # Append our line
-                        target_files[file]["lines"].append(l)
-                        target_files[file]["table"] += "\n"+l
+                else:
+                    # If we didn't get a last hex val - then we likely don't have any
+                    # This can happen if the file passed is small enough, or has all
+                    # the data in a single block.
+                    next_addr = 0
+                    remaining = target_files[file]["raw"]
+                # Iterate in chunks of 16
+                for chunk in [remaining[i:i+16] for i in range(0,len(remaining),16)]:
+                    # Build a new byte string
+                    hex_string = binascii.hexlify(chunk)
+                    # Decode the bytes if we're on python 3
+                    if 2/3!=0: hex_string = hex_string.decode()
+                    # Ensure the bytes are all upper case
+                    hex_string = hex_string.upper()
+                    l = "   {}: {}".format(
+                        hex(next_addr)[2:].upper().rjust(4,"0"),
+                        " ".join([hex_string[i:i+2] for i in range(0,len(hex_string),2)])
+                    )
+                    # Increment our address
+                    next_addr += len(chunk)
+                    # Append our line
+                    target_files[file]["lines"].append(l)
+                    target_files[file]["table"] += "\n"+l
             # Remove any that didn't disassemble
             for file in to_remove:
                 target_files.pop(file,None)
