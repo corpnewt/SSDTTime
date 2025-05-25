@@ -459,6 +459,10 @@ class DSDT:
     def dump_tables(self, output, disassemble=False):
         # Helper to dump all ACPI tables to the specified
         # output path
+        def check_command_output(out):
+            if out[2] == 0: return False
+            print(" - {}".format(out[1]))
+            return True
         self.u.head("Dumping ACPI Tables")
         print("")
         res = self.check_output(output)
@@ -471,8 +475,7 @@ class DSDT:
                 os.chdir(res)
                 out = self.r.run({"args":[target,"-b"]})
                 os.chdir(cwd)
-                if out[2] != 0:
-                    print(" - {}".format(out[1]))
+                if check_command_output(out):
                     return
                 # Make sure we have a DSDT
                 if not next((x for x in os.listdir(res) if x.lower().startswith("dsdt.")),None):
@@ -482,8 +485,7 @@ class DSDT:
                     os.chdir(res)
                     out = self.r.run({"args":[target,"-b","-n","DSDT"]})
                     os.chdir(cwd)
-                    if out[2] != 0:
-                        print(" - {}".format(out[1]))
+                    if check_command_output(out):
                         return
                 # Iterate the dumped files and ensure the names are uppercase, and the
                 # extension used is .aml, not the default .dat
@@ -516,14 +518,19 @@ class DSDT:
                 if not os.path.isfile(os.path.join(table_dir,table)):
                     continue # We only want files
                 target_path = os.path.join(res,table.upper()+".aml")
-                out = self.r.run({"args":["sudo","cp",os.path.join(table_dir,table),target_path]})
-                if out[2] != 0:
-                    print(" - {}".format(out[1]))
-                    return
-                out = self.r.run({"args":["sudo","chown",getpass.getuser(), target_path]})
-                if out[2] != 0:
-                    print(" - {}".format(out[1]))
-                    return
+                comms = (
+                    # Copy the file
+                    ["sudo","cp",os.path.join(table_dir,table),target_path],
+                    # Ensure it's owned by the user account
+                    ["sudo","chown",getpass.getuser(),target_path],
+                    # Enable read and write permissions
+                    ["sudo","chmod","a+rw",target_path]
+                )
+                # Iterate our commands and bail if any error
+                for comm in comms:
+                    out = self.r.run({"args":comm})
+                    if check_command_output(out):
+                        return
             print("Dump successful!")
             if disassemble:
                 return self.load(res)
