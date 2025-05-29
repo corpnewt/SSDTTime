@@ -529,43 +529,44 @@ class SSDT:
             print("")
         return None # Didn't find it
 
+    def sta_needs_patching(self, sta, table):
+        # A helper method to determine if an _STA
+        # needs patching to enable based on the
+        # type and returns.
+        if not isinstance(sta,dict) or not sta.get("sta"):
+            return False
+        # Check if we have an IntObj or MethodObj
+        # _STA, and scrape for values if possible.
+        if sta.get("sta_type") == "IntObj":
+            # We got an int - see if it's force-enabled
+            try:
+                sta_scope = table["lines"][sta["sta"][0][1]]
+                if not "Name (_STA, 0x0F)" in sta_scope:
+                    return True
+            except Exception as e:
+                return True
+        elif sta.get("sta_type") == "MethodObj":
+            # We got a method - if we have more than one
+            # "Return (", or not a single "Return (0x0F)",
+            # then we need to patch this out and replace
+            try:
+                sta_scope = "\n".join(self.d.get_scope(sta["sta"][0][1],strip_comments=True,table=table))
+                if sta_scope.count("Return (") > 1 or not "Return (0x0F)" in sta_scope:
+                    print("Multiple returns or not Return (0x0F)")
+                    # More than one return, or our return isn't force-enabled
+                    return True
+            except Exception as e:
+                return True
+        # If we got here - it's not a recognized type, or
+        # it was fullly qualified and doesn't need patching
+        return False
+
     def fake_ec(self, laptop = False):
         if not self.ensure_dsdt():
             return
         self.u.head("Fake EC")
         print("")
         print("Locating PNP0C09 (EC) devices...")
-        # Set up a helper method to determine
-        # if an _STA needs patching based on
-        # the type and returns.
-        def sta_needs_patching(sta):
-            if not isinstance(sta,dict) or not sta.get("sta"):
-                return False
-            # Check if we have an IntObj or MethodObj
-            # _STA, and scrape for values if possible.
-            if sta.get("sta_type") == "IntObj":
-                # We got an int - see if it's force-enabled
-                try:
-                    sta_scope = table["lines"][sta["sta"][0][1]]
-                    if not "Name (_STA, 0x0F)" in sta_scope:
-                        return True
-                except Exception as e:
-                    print(e)
-                    return True
-            elif sta.get("sta_type") == "MethodObj":
-                # We got a method - if we have more than one
-                # "Return (", or not a single "Return (0x0F)",
-                # then we need to patch this out and replace
-                try:
-                    sta_scope = "\n".join(self.d.get_scope(sta["sta"][0][1],strip_comments=True,table=table))
-                    if sta_scope.count("Return (") > 1 or not "Return (0x0F)" in sta_scope:
-                        # More than one return, or our return isn't force-enabled
-                        return True
-                except Exception as e:
-                    return True
-            # If we got here - it's not a recognized type, or
-            # it was fullly qualified and doesn't need patching
-            return False
         rename = False
         named_ec = False
         ec_to_patch = []
@@ -613,7 +614,7 @@ class SSDT:
                                 patches.extend(sta.get("patches",[]))
                                 ec_sta[device] = sta
                         elif sta.get("patches"):
-                            if sta_needs_patching(sta):
+                            if self.sta_needs_patching(sta, table=table):
                                 # Retain the info as we need to override it
                                 ec_to_enable.append(device)
                                 ec_enable_sta[device] = sta
@@ -3578,6 +3579,67 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SBUSMCHC", 0x00000000)
             if als:
                 print(" - Found at {}".format(als[0][0]))
                 print(" --> No fake needed!")
+                # Check for an _STA var, and override it if need be
+                sta = self.get_sta_var(
+                    var=None,
+                    device=als[0][0],
+                    dev_hid="ACPI0008",
+                    dev_name=als[0][0].split(".")[-1],
+                    log_locate=False,
+                    table=table
+                )
+                if sta.get("patches"):
+                    if self.sta_needs_patching(sta, table=table):
+                        # We need to write a quick SSDT to force enable our
+                        # light sensor
+                        print("Creating SSDT-ALS0...")
+                        ssdt = """
+DefinitionBlock ("", "SSDT", 2, "CORP", "ALS0", 0x00000000)
+{
+    External ([[als0_path]], DeviceObj)
+    External ([[als0_path]]._STA, [[sta_type]])
+    External ([[als0_path]].XSTA, [[sta_type]])
+
+    If (LAnd (CondRefOf ([[als0_path]].XSTA), LNot (CondRefOf ([[als0_path]]._STA))))
+    {
+        Scope ([[als0_path]])
+        {
+            // Override our original Light Sensor _STA method
+            Method (_STA, 0, NotSerialized)  // _STA: Status
+            {
+                If (_OSI ("Darwin"))
+                {
+                    // Explicitly enable the Light Sensor in macOS
+                    Return (0x0F)
+                }
+                Else
+                {
+                    // Call the original, now renamed _STA method
+                    // if we're not booting macOS
+                    Return ([[XSTA]])
+                }
+            }
+        }
+    }
+}""".replace("[[als0_path]]",als[0][0]) \
+.replace("[[sta_type]]",sta.get("sta_type","MethodObj")) \
+.replace("[[XSTA]]","{}.XSTA{}".format(als[0][0]," ()" if sta.get("sta_type","MethodObj")=="MethodObj" else ""))
+                        oc = {
+                            "Comment":"Enables {} in macOS - requires _STA to XSTA rename".format(sta["dev_name"]),
+                            "Enabled":True,
+                            "Path":"SSDT-ALS0.aml"
+                        }
+                        self.write_ssdt("SSDT-ALS0",ssdt)
+                        self.make_plist(oc,"SSDT-ALS0.aml",sta.get("patches",[]))
+                        print("")
+                        print("Done.")
+                        self.patch_warn()
+                        self.u.grab("Press [enter] to return...")
+                        return
+                    else:
+                        print(" --> _STA properly enabled - no patching needed!")
+                else:
+                    print(" --> Not found - no patching needed!")
                 print("")
                 self.u.grab("Press [enter] to return to main menu...")
                 return
