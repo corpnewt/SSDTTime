@@ -279,44 +279,45 @@ class DSDT:
                     # Cast as int on py2, and try to decode bytes to strings on py3
                     if 2/3==0:
                         target_files[file]["revision"] = int(binascii.hexlify(target_files[file]["revision"]),16)
-                # The disassembler omits the last line of hex data in a mixed listing
-                # file... convenient.  However - we should be able to reconstruct this
-                # manually.
-                last_hex = next((l for l in target_files[file]["lines"][::-1] if self.is_hex(l)),None)
-                if last_hex:
-                    # Get the address left of the colon
-                    addr = int(last_hex.split(":")[0].strip(),16)
-                    # Get the hex bytes right of the colon
-                    hexs = last_hex.split(":")[1].split("//")[0].strip()
-                    # Increment the address by the number of hex bytes
-                    next_addr = addr+len(hexs.split())
-                    # Now we need to get the bytes at the end
-                    hexb = self.get_hex_bytes(hexs.replace(" ",""))
-                    # Get the last occurrence after the split
-                    remaining = target_files[file]["raw"].split(hexb)[-1]
-                else:
-                    # If we didn't get a last hex val - then we likely don't have any
-                    # This can happen if the file passed is small enough, or has all
-                    # the data in a single block.
-                    next_addr = 0
-                    remaining = target_files[file]["raw"]
-                # Iterate in chunks of 16
-                for chunk in [remaining[i:i+16] for i in range(0,len(remaining),16)]:
-                    # Build a new byte string
-                    hex_string = binascii.hexlify(chunk)
-                    # Decode the bytes if we're on python 3
-                    if 2/3!=0: hex_string = hex_string.decode()
-                    # Ensure the bytes are all upper case
-                    hex_string = hex_string.upper()
-                    l = "   {}: {}".format(
-                        hex(next_addr)[2:].upper().rjust(4,"0"),
-                        " ".join([hex_string[i:i+2] for i in range(0,len(hex_string),2)])
-                    )
-                    # Increment our address
-                    next_addr += len(chunk)
-                    # Append our line
-                    target_files[file]["lines"].append(l)
-                    target_files[file]["table"] += "\n"+l
+                if target_files[file]["signature"] in self.mixed_listing:
+                    # The disassembler omits the last line of hex data in a mixed listing
+                    # file... convenient.  However - we should be able to reconstruct this
+                    # manually.
+                    last_hex = next((l for l in target_files[file]["lines"][::-1] if self.is_hex(l)),None)
+                    if last_hex:
+                        # Get the address left of the colon
+                        addr = int(last_hex.split(":")[0].strip(),16)
+                        # Get the hex bytes right of the colon
+                        hexs = last_hex.split(":")[1].split("//")[0].strip()
+                        # Increment the address by the number of hex bytes
+                        next_addr = addr+len(hexs.split())
+                        # Now we need to get the bytes at the end
+                        hexb = self.get_hex_bytes(hexs.replace(" ",""))
+                        # Get the last occurrence after the split
+                        remaining = target_files[file]["raw"].split(hexb)[-1]
+                    else:
+                        # If we didn't get a last hex val - then we likely don't have any
+                        # This can happen if the file passed is small enough, or has all
+                        # the data in a single block.
+                        next_addr = 0
+                        remaining = target_files[file]["raw"]
+                    # Iterate in chunks of 16
+                    for chunk in [remaining[i:i+16] for i in range(0,len(remaining),16)]:
+                        # Build a new byte string
+                        hex_string = binascii.hexlify(chunk)
+                        # Decode the bytes if we're on python 3
+                        if 2/3!=0: hex_string = hex_string.decode()
+                        # Ensure the bytes are all upper case
+                        hex_string = hex_string.upper()
+                        l = "   {}: {}".format(
+                            hex(next_addr)[2:].upper().rjust(4,"0"),
+                            " ".join([hex_string[i:i+2] for i in range(0,len(hex_string),2)])
+                        )
+                        # Increment our address
+                        next_addr += len(chunk)
+                        # Append our line
+                        target_files[file]["lines"].append(l)
+                        target_files[file]["table"] += "\n"+l
             # Remove any that didn't disassemble
             for file in to_remove:
                 target_files.pop(file,None)
