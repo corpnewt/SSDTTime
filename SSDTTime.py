@@ -2569,6 +2569,12 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                         "" if b==1 else "s"
                     ))
                 matches.append((p,match))
+                # See if we have any addresses that overflow
+                over_match = self.get_longest_match(device_dict,p,adj=True)
+                if over_match:
+                    print("\n{}!! WARNING !!{}  Also matched the following devices whose addresses overflow which".format(self.yel,self.rst))
+                    print("               may prevent bridges and DeviceProperties from working correctly:")
+                    print("\n".join(["               {}".format(x) for x in sorted(over_match[1].get("dev_overflow",[over_match[0]]))]))
         if not matches:
             self.print_unmatched(unmatched=unmatched,pci_root_paths=pci_root_paths)
             print("")
