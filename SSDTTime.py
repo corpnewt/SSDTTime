@@ -2353,8 +2353,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         matches = []
         for d in device_dict:
             try:
-                if d in exclusions_list:
-                    # Skip excluded paths
+                if any(d.startswith(x) for x in exclusions_list):
+                    # Skip excluded paths, and all child elements under
+                    # those paths.
                     continue
             except:
                 pass
