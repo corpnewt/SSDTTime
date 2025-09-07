@@ -2341,17 +2341,23 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                 new_path.append("Pci({},{})".format(self.hexy(adr1),self.hexy(adr2)))
         return "/".join(new_path)
 
-    def get_longest_match(self, device_dict, match_path, adj=False):
-        matches = self.get_all_matches(device_dict,match_path,adj=adj)
+    def get_longest_match(self, device_dict, match_path, adj=False, exclusions_list=None):
+        matches = self.get_all_matches(device_dict,match_path,adj=adj,exclusions_list=exclusions_list)
         if not matches: return
         return sorted(matches,key=lambda x:x[-1],reverse=True)[0]
 
-    def get_all_matches(self, device_dict, match_path, adj=False):
+    def get_all_matches(self, device_dict, match_path, adj=False, exclusions_list=None):
         matched = None
         exact   = False
         key     = "adj_path" if adj else "path"
         matches = []
         for d in device_dict:
+            try:
+                if d in exclusions_list:
+                    # Skip excluded paths
+                    continue
+            except:
+                pass
             device = device_dict[d].get(key)
             if not device: continue
             if match_path.lower().startswith(device.lower()):
@@ -2360,6 +2366,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
 
     def get_device_path(self):
         paths = {}
+        acpi_exclusions = []
         while True:
             self.u.head("Input Device Path")
             print("")
@@ -2374,6 +2381,11 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                         ))
                     else:
                         print("{}. {}".format(str(i).rjust(2),x))
+            if acpi_exclusions:
+                print("")
+                print("ACPI Devices Excluded:")
+                for i,x in enumerate(acpi_exclusions,start=1):
+                    print("{}. {}".format(str(i).rjust(2),x))
             print("")
             print("A valid device path will have one of the following formats,")
             print("optionally followed by a 4-digit device name:")
@@ -2383,20 +2395,27 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             print("")
             if paths:
                 print("A. Accept Paths and Continue")
-            print("C. Clear All")
+            print("C. Clear All Device Paths")
+            if acpi_exclusions:
+                print("X. Clear All ACPI Exclusions")
             print("M. Main")
             print("Q. Quit")
-            print(" ")
+            print("")
             print("Enter the number next to a device path above to remove it.")
+            print("Enter an ACPI path to exclude it from the checks.")
+            print("")
             path = self.u.grab("Please enter the device path needing bridges:\n\n")
             if path.lower() == "m":
                 return
             elif path.lower() == "q":
                 self.u.custom_quit()
             elif path.lower() == "a" and paths:
-                return paths
+                return (paths, acpi_exclusions)
             elif path.lower() == "c":
                 paths = {}
+                continue
+            elif path.lower() == "x" and acpi_exclusions:
+                acpi_exclusions = []
                 continue
             # Check if it's a number first
             try:
@@ -2405,6 +2424,59 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                 continue
             except:
                 pass
+            # Check if it's an ACPI path
+            acpi_dev = None
+            if len(path) >= 3:
+                # Make sure we send at least 3 chars before
+                # looking for ACPI paths
+                acpi_dev = self.sanitize_acpi_path(path)
+            if acpi_dev:
+                # Got an ACPI path, make sure it exists
+                acpi_path = ".".join(acpi_dev)
+                # Search the tables for any matches - only look for actual
+                # Device () definitions though, not Scope () sets as well.
+                matched_devices = []
+                for table_name in self.sorted_nicely(list(self.d.acpi_tables)):
+                    table = self.d.acpi_tables[table_name]
+                    matched_devices += [(x,table_name) for x in self.d.get_device_paths(obj=acpi_path,table=table)]
+                if matched_devices:
+                    # We have at least one matched device
+                    if len(matched_devices) > 1:
+                        # We have multiples - prompt for which to add
+                        bail = False
+                        while True:
+                            self.u.head("Multiple Matches")
+                            print("")
+                            print("There are {:,} matches for {}:".format(len(matched_devices),acpi_path))
+                            print("")
+                            for i,m in enumerate(matched_devices,start=1):
+                                print("{}. {} ({})".format(str(i).rjust(2),m[0][0],m[1]))
+                            print("")
+                            print("M. Device Path Menu")
+                            print("Q. Quit")
+                            print("")
+                            d = self.u.grab("Please select the ACPI path to exclude:  ")
+                            if d.lower() == "m":
+                                bail = True
+                                break
+                            elif d.lower() == "q":
+                                self.u.custom_quit()
+                            try:
+                                d = int(d)
+                                assert 0 < d <= len(matched_devices)
+                            except:
+                                continue
+                            # Got one - select it
+                            matched_devices = [matched_devices[d-1]]
+                            break
+                        if bail:
+                            # We wanted to return to the menu
+                            continue
+                    # We got a single matched device - add only its path
+                    # to the list.
+                    if not matched_devices[0][0][0] in acpi_exclusions:
+                        acpi_exclusions.append(matched_devices[0][0][0])
+                continue
             # Extract the path and device
             # if specified
             path_dev = path.split()
@@ -2545,6 +2617,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         if not self.ensure_dsdt(): return
         path_dict = self.get_device_path()
         if not path_dict: return
+        # Break out the paths from any acpi exclusions
+        path_dict,acpi_exclusions = path_dict
         self.u.head("Building Bridges")
         print("")
         device_dict,pci_root_paths = self.get_device_paths()
@@ -2553,7 +2627,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
         print("Matching device paths...")
         for p in sorted(path_dict):
             print(" - {}".format(p))
-            match = self.get_longest_match(device_dict,p)
+            match = self.get_longest_match(device_dict,p,exclusions_list=acpi_exclusions)
             if not match:
                 print(" --> No match found!")
                 unmatched.append(p)
