@@ -2372,10 +2372,13 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             self.u.head("Input Device Path")
             print("")
             print("Current Paths:")
+            # Retain order to prevent any odd drifting
+            sorted_paths = self.sorted_nicely(paths)
+            paths_length = len(sorted_paths)
             if not paths:
                 print(" - None")
             else:
-                for i,x in enumerate(paths,start=1):
+                for i,x in enumerate(sorted_paths,start=1):
                     if paths[x]:
                         print("{}. {} {}".format(
                             str(i).rjust(2),x,paths[x]
@@ -2385,8 +2388,8 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             if acpi_exclusions:
                 print("")
                 print("ACPI Devices Excluded:")
-                for i,x in enumerate(acpi_exclusions,start=1):
-                    print("{}. {}".format(str(i).rjust(2),x))
+                for i,x in enumerate(self.sorted_nicely(acpi_exclusions),start=1):
+                    print("{}. {}".format(str(i+paths_length).rjust(2),x))
             print("")
             print("A valid device path will have one of the following formats,")
             print("optionally followed by a 4-digit device name:")
@@ -2402,7 +2405,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             print("M. Main")
             print("Q. Quit")
             print("")
-            print("Enter the number next to a device path above to remove it.")
+            print("Enter the number next to a device/ACPI path above to remove it.")
             print("Enter an ACPI path to exclude it from the checks.")
             print("")
             path = self.u.grab("Please enter the device path needing bridges:\n\n")
@@ -2421,13 +2424,18 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             # Check if it's a number first
             try:
                 path_int = int(path)
-                del paths[path_int-1]
+                if path_int <= paths_length:
+                    # Removing device path
+                    del paths[sorted_paths[path_int-1]]
+                else:
+                    # Removing ACPI path
+                    del acpi_exclusions[path_int-paths_length-1]
                 continue
             except:
                 pass
             # Check if it's an ACPI path
             acpi_dev = None
-            if len(path) >= 3:
+            if len(path) >= 3 and not " " in path:
                 # Make sure we send at least 3 chars before
                 # looking for ACPI paths
                 acpi_dev = self.sanitize_acpi_path(path)
