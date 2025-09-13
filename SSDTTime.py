@@ -1032,12 +1032,9 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "CpuPlugA", 0x00003000)
         return sorted(list(irq_list))
 
     def get_data(self, data, pad_to=0):
-        if sys.version_info >= (3, 0):
-            if not isinstance(data,bytes):
-                data = data.encode()
-            return data+b"\x00"*(max(pad_to-len(data),0))
-        else:
-            return plistlib.Data(data+b"\x00"*(max(pad_to-len(data),0)))
+        if sys.version_info >= (3, 0) and not isinstance(data,bytes):
+            data = data.encode()
+        return plist.wrap_data(data+b"\x00"*(max(pad_to-len(data),0)))
 
     def _get_table_id(self, table, id_name, mode=None):
         if mode is None:
@@ -2407,7 +2404,12 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
             print("")
             print("Enter the number next to a device/ACPI path above to remove it.")
             print("Enter an ACPI path to exclude it from the checks.")
+            print("Drag and drop a config.plist to extract device paths from within.")
             print("")
+            if self.copy_as_path:
+                print("NOTE:  Currently running as admin on Windows - drag and drop may not work.")
+                print("       Shift + right-click in Explorer and select 'Copy as path' then paste here instead.")
+                print("")
             path = self.u.grab("Please enter the device path needing bridges:\n\n")
             if path.lower() == "m":
                 return
@@ -2485,6 +2487,64 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "SsdtUsbx", 0x00001000)
                     # to the list.
                     if not matched_devices[0][0][0] in acpi_exclusions:
                         acpi_exclusions.append(matched_devices[0][0][0])
+                continue
+            # Check if we got a file path
+            file_path = self.u.check_path(path)
+            if file_path and file_path.lower().endswith(".plist") and os.path.isfile(file_path):
+                # Try loading it
+                file_name = os.path.basename(file_path)
+                self.u.head("Processing {}".format(file_name))
+                print("")
+                print("Loading {}...".format(file_name))
+                try:
+                    with open(file_path,"rb") as f:
+                        passed_plist = plist.load(f)
+                except Exception as e:
+                    print(" - Failed to open: {}".format(e))
+                    print("")
+                    self.u.grab("Press [enter] to return...")
+                    continue
+                print("Verifying root node type...")
+                if not isinstance(passed_plist,dict):
+                    print(" - Invalid type - must be dictionary")
+                    print("")
+                    self.u.grab("Press [enter] to return...")
+                    continue
+                print("Gathering device paths...")
+                dp_keys = None
+                try:
+                    # OpenCore pathing
+                    dp_keys = passed_plist.get("DeviceProperties",{}).get("Add",{})
+                except:
+                    pass
+                if not dp_keys:
+                    try:
+                        # Clover pathing
+                        dp_keys = passed_plist.get("Devices",{}).get("Properties")
+                    except:
+                        pass
+                if not dp_keys or not isinstance(dp_keys,dict):
+                    print(" - No device paths located.")
+                    print("")
+                    self.u.grab("Press [enter] to return...")
+                    continue
+                print("Iterating {:,} device paths...".format(len(dp_keys)))
+                any_failed = False
+                for d in dp_keys:
+                    print(" - {}".format(d))
+                    d_path = self.sanitize_device_path(d)
+                    if not d_path:
+                        print(" --> Invalid device path - skipping")
+                        any_failed = True
+                        continue
+                    if d_path in paths:
+                        print(" --> Already exists in device path list - skipping")
+                        continue
+                    # Add it
+                    paths[d_path] = None
+                if any_failed:
+                    print("")
+                    self.u.grab("Press [enter] to return...")
                 continue
             # Extract the path and device
             # if specified
