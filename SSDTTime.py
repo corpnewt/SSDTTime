@@ -1606,8 +1606,10 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
                 if log_locate: print(" - Could not locate any {} devices".format(dev_hid))
                 return {"valid":False}
         dev = dev_list[0]
+        parts = dev[0].split(".")
+        root = parts[0]
+        name = parts[-1].lstrip("\\")
         if log_locate: print(" - Found {}".format(dev[0]))
-        root = dev[0].split(".")[0]
         print(" --> Verifying _STA...")
         # Check Method first - then Name
         sta_type = "MethodObj"
@@ -1622,7 +1624,7 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
             print(" --> _STA already renamed to XSTA!  Skipping other checks...")
             print("     Please disable _STA to XSTA renames for this device, reboot, and try again.")
             print("")
-            return {"valid":False,"break":True,"device":dev,"dev_name":dev_name,"dev_hid":dev_hid,"sta_type":sta_type}
+            return {"valid":False,"break":True,"device":dev,"dev_name":name,"dev_hid":dev_hid,"sta_type":sta_type}
         if sta:
             if var:
                 scope = "\n".join(self.d.get_scope(sta[0][1],strip_comments=True,table=table))
@@ -1639,12 +1641,12 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PMCR", 0x00001000)
             xsta_hex = "58535441" # XSTA
             padl,padr = self.d.get_shortest_unique_pad(sta_hex,sta_index,table=table)
             patches.append({
-                "Comment":"{} _STA to XSTA Rename".format(dev_name),
+                "Comment":"{} _STA to XSTA Rename".format(name),
                 "Find":padl+sta_hex+padr,
                 "Replace":padl+xsta_hex+padr,
                 "Table":table
             })
-        return {"valid":True,"has_var":has_var,"sta":sta,"patches":patches,"device":dev,"dev_name":dev_name,"dev_hid":dev_hid,"root":root,"sta_type":sta_type}
+        return {"valid":True,"has_var":has_var,"sta":sta,"patches":patches,"device":dev,"dev_name":name,"dev_hid":dev_hid,"root":root,"sta_type":sta_type}
 
     def ssdt_awac(self):
         if not self.ensure_dsdt():
