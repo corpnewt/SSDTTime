@@ -97,7 +97,13 @@ download_py () {
         echo "User-Provided Version:  $vers"
     fi
     echo "Building download url..."
-    url="$(curl -L https://www.python.org/downloads/release/python-${vers//./}/ --compressed 2>&1 | grep -iE "python-$vers-macos.*.pkg\"" | awk -F'"' '{ print $2 }' | head -n 1)"
+    url="$(\
+    curl -L https://www.python.org/downloads/release/python-${vers//./}/ --compressed 2>&1 | \
+    grep -iE "python-$vers-macos.*.pkg\"" | \
+    grep -iE "a href=" | \
+    awk -F'"' '{ print $2 }' | \
+    head -n 1\
+    )"
     if [ -z "$url" ]; then
         if [ "$just_installing" == "TRUE" ]; then
             echo " - Failed to build download url!"
@@ -120,11 +126,11 @@ download_py () {
     echo "Running python install package..."
     echo
     sudo installer -pkg "$tempdir/python.pkg" -target /
-    echo
     if [ "$?" != "0" ]; then
         echo " - Failed to install python!"
         exit $?
     fi
+    echo
     # Now we expand the package and look for a shell update script
     pkgutil --expand "$tempdir/python.pkg" "$tempdir/python"
     if [ -e "$tempdir/python/Python_Shell_Profile_Updater.pkg/Scripts/postinstall" ]; then
