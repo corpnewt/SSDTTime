@@ -2907,7 +2907,23 @@ DefinitionBlock ("", "SSDT", 2, "CORP", "PCIBRG", 0x00000000)
                     "0"
                 )
             )
-            ssdt += "{}Name (_ADR, {})\n".format(p,adr)
+            ssdt += "{}Name (_ADR, {})".format(p,adr)
+            # Add our _STA with a macOS check
+            ssdt += """
+[[1]]Method (_STA, 0, NotSerialized)
+[[1]]{
+[[2]]If (_OSI ("Darwin"))
+[[2]]{
+[[3]]Return (0x0F)
+[[2]]}
+[[2]]Else
+[[2]]{
+[[3]]Return (Zero)
+[[2]]}
+[[1]]}
+""".replace("[[1]]",p) \
+   .replace("[[2]]",p+pad) \
+   .replace("[[3]]",p+(pad*2))
         # We finished parsing - clean up after ourselves
         if last_path:
             last_depth = len(last_path)
