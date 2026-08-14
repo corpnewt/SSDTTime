@@ -15,7 +15,11 @@ class DSDT:
         self.iasl_url_macOS_legacy = "https://raw.githubusercontent.com/acidanthera/MaciASL/master/Dist/iasl-legacy"
         self.iasl_url_linux = "https://raw.githubusercontent.com/corpnewt/linux_iasl/main/iasl.zip"
         self.iasl_url_linux_legacy = "https://raw.githubusercontent.com/corpnewt/iasl-legacy/main/iasl-legacy-linux.zip"
-        self.acpi_github_windows = "https://github.com/acpica/acpica/releases/latest"
+        self.acpi_github_windows = "https://github.com/acpica/acpica/releases"
+        self.acpi_github_windows_placeholder = "https://github.com/acpica/acpica/releases/{}"
+        self.acpi_github_blacklist = (
+            "20260408",
+        )
         self.acpi_binary_tools = "https://www.intel.com/content/www/us/en/developer/topic-technology/open/acpica/download.html"
         self.iasl_url_windows_legacy = "https://raw.githubusercontent.com/corpnewt/iasl-legacy/main/iasl-legacy-windows.zip"
         self.h = {} # {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -336,7 +340,16 @@ class DSDT:
     def get_latest_iasl(self):
         # First try getting from github - if that fails, fall back to intel.com
         try:
-            source = self.dl.get_string(self.acpi_github_windows, progress=False, headers=self.h)
+            release_source = self.dl.get_string(self.acpi_github_windows, progress=False, headers=self.h)
+            # Gather the latest releases and compare them to our blacklist
+            releases = [x.split('"')[0] for x in release_source.split('<li data-item-id="release-')[1:]]
+            selected_release = next((x for x in releases if not x in self.acpi_github_blacklist), None)
+            # Get the source of that release page - or the latest if we didn't find one
+            source = self.dl.get_string(
+                self.acpi_github_windows_placeholder.format(selected_release or "latest"),
+                progress=False,
+                headers=self.h
+            )
             assets_url = None
             # Check for attachments first
             for line in source.split("\n"):
