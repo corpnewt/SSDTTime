@@ -19,6 +19,7 @@ class DSDT:
         self.acpi_github_windows_placeholder = "https://github.com/open-acpica/acpica/releases/{}"
         self.acpi_github_blacklist = (
             "20260408",
+            "20260930",
         )
         self.acpi_binary_tools = "https://www.intel.com/content/www/us/en/developer/topic-technology/open/acpica/download.html"
         self.iasl_url_windows_legacy = "https://raw.githubusercontent.com/corpnewt/iasl-legacy/main/iasl-legacy-windows.zip"
