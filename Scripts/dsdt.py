@@ -432,6 +432,18 @@ class DSDT:
                     os.path.join(os.path.dirname(os.path.realpath(__file__)), "iasl")
                 )
         target = next((t for t in targets if os.path.exists(t)),None)
+        # Verify it's a valid version if on Windows
+        if not legacy and target and sys.platform == "win32":
+            o,e,c = self.r.run({"args":[target,"-v"]})
+            version = None
+            try:
+                version = o.replace("\r","").split(" version ")[1].split("\n")[0]
+            except:
+                pass
+            if version and version in self.acpi_github_blacklist:
+                # Got a blacklisted version - reset target
+                print("Located blacklisted iasl.exe version {}".format(version))
+                target = None
         if target or not try_downloading:
             # Either found it - or we didn't, and have already tried downloading
             return target
