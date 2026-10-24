@@ -19,7 +19,6 @@ class DSDT:
         self.acpi_github_windows_placeholder = "https://github.com/open-acpica/acpica/releases/{}"
         self.acpi_github_blacklist = (
             "20260408",
-            "20260930",
         )
         self.acpi_binary_tools = "https://www.intel.com/content/www/us/en/developer/topic-technology/open/acpica/download.html"
         self.iasl_url_windows_legacy = "https://raw.githubusercontent.com/corpnewt/iasl-legacy/main/iasl-legacy-windows.zip"
@@ -344,26 +343,33 @@ class DSDT:
             release_source = self.dl.get_string(self.acpi_github_windows, progress=False, headers=self.h)
             # Gather the latest releases and compare them to our blacklist
             releases = [x.split('"')[0] for x in release_source.split('<li data-item-id="release-')[1:]]
-            selected_release = next((x for x in releases if not x in self.acpi_github_blacklist), None)
-            # Get the source of that release page - or the latest if we didn't find one
-            source = self.dl.get_string(
-                self.acpi_github_windows_placeholder.format(selected_release or "latest"),
-                progress=False,
-                headers=self.h
-            )
-            assets_url = None
-            # Check for attachments first
-            for line in source.split("\n"):
-                if '<a href="https://github.com/user-attachments/files/' in line \
-                and "/iasl-win-" in line and '.zip"' in line:
-                    # We found it - return the URL
-                    return line.split('<a href="')[1].split('"')[0]
-                if 'src="' in line and "expanded_assets" in line:
-                    # Save the URL for later in case we need it
-                    assets_url = line.split('src="')[1].split('"')[0]
-            # If we got here - we didn't find the link in the attachments,
-            # check in the expanded assets
-            if assets_url:
+            allowed_releases = [x for x in releases if not x in self.acpi_github_blacklist]
+            if not allowed_releases:
+                allowed_releases = ["latest"] # Fall back on the latest if nothing else
+            for release in allowed_releases:
+                url = self.acpi_github_windows_placeholder.format(release)
+                print("Checking {}...".format(url))
+                # Get the source of that release page - or the latest if we didn't find one
+                source = self.dl.get_string(
+                    url,
+                    progress=False,
+                    headers=self.h
+                )
+                assets_url = None
+                # Check for attachments first
+                for line in source.split("\n"):
+                    if '<a href="https://github.com/user-attachments/files/' in line \
+                    and "/iasl-win-" in line and '.zip"' in line:
+                        # We found it - return the URL
+                        return line.split('<a href="')[1].split('"')[0]
+                    if 'src="' in line and "expanded_assets" in line:
+                        # Save the URL for later in case we need it
+                        assets_url = line.split('src="')[1].split('"')[0]
+                # If we got here - we didn't find the link in the attachments,
+                # check in the expanded assets
+                if not assets_url:
+                    print(" - Missing required files")
+                    continue # Missing assets - onto the next
                 source = self.dl.get_string(assets_url, progress=False, headers=self.h)
                 iasl = acpidump = None # Placeholders
                 for line in source.split("\n"):
@@ -374,9 +380,12 @@ class DSDT:
                             iasl = "https://github.com{}".format(line.split('"')[1].split('"')[0])
                         if '/acpidump.exe"' in line:
                             acpidump = "https://github.com{}".format(line.split('"')[1].split('"')[0])
-                if iasl and acpidump:
-                    # Got the needed files, return them
-                    return (iasl,acpidump)
+                if not all((iasl,acpidump)):
+                    # Required files were not found
+                    print(" - Missing required files")
+                    continue
+                # Got the needed files, return them
+                return (iasl,acpidump)
             # If we got here - move on to intel.com
         except: pass
         # Helper to scrape https://www.intel.com/content/www/us/en/developer/topic-technology/open/acpica/download.html for the latest
